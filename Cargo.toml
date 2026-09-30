@@ -1,0 +1,9 @@
+[package]
+name = "corxnet-config"
+version = "0.1.0"
+edition = "2021"
+description = "UDP network configuration utility for Corxnet controllers"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
