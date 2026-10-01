@@ -1,13 +1,15 @@
 use std::{
-    ffi::CString,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
-    os::fd::AsRawFd,
     process,
     time::Duration,
 };
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, Shell};
+#[cfg(not(target_os = "linux"))]
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 
 const DEST_PORT: u16 = 60000;
 const LOCAL_PORT: u16 = 60001;
@@ -123,8 +125,17 @@ fn run(cli: Cli) -> Result<(), String> {
 }
 
 fn socket(interface: Option<&str>) -> Result<UdpSocket, String> {
-    let s = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, LOCAL_PORT))
+    let local_ip = match interface {
+        #[cfg(target_os = "linux")]
+        _ => Ipv4Addr::UNSPECIFIED,
+        #[cfg(not(target_os = "linux"))]
+        Some(name) => interface_ipv4(name)?,
+        #[cfg(not(target_os = "linux"))]
+        None => Ipv4Addr::UNSPECIFIED,
+    };
+    let s = UdpSocket::bind(SocketAddrV4::new(local_ip, LOCAL_PORT))
         .map_err(|e| format!("绑定 UDP 本地端口 {LOCAL_PORT} 失败：{e}"))?;
+    #[cfg(target_os = "linux")]
     if let Some(name) = interface {
         bind_interface(&s, name)?;
     }
@@ -132,6 +143,23 @@ fn socket(interface: Option<&str>) -> Result<UdpSocket, String> {
     s.set_read_timeout(Some(TIMEOUT))
         .map_err(|e| e.to_string())?;
     Ok(s)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn interface_ipv4(name: &str) -> Result<Ipv4Addr, String> {
+    let interfaces = NetworkInterface::show().map_err(|e| format!("读取网卡列表失败：{e}"))?;
+    let interface = interfaces
+        .iter()
+        .find(|interface| interface.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| format!("找不到网卡“{name}”；请先查看本机网卡名称"))?;
+    interface
+        .addr
+        .iter()
+        .find_map(|addr| match addr {
+            Addr::V4(address) if !address.ip.is_unspecified() => Some(address.ip),
+            _ => None,
+        })
+        .ok_or_else(|| format!("网卡“{name}”没有可用的 IPv4 地址"))
 }
 
 #[cfg(target_os = "linux")]
@@ -147,7 +175,7 @@ fn bind_interface(socket: &UdpSocket, name: &str) -> Result<(), String> {
             length: u32,
         ) -> i32;
     }
-    let name = CString::new(name).map_err(|_| "网卡名称不能包含 NUL 字符")?;
+    let name = std::ffi::CString::new(name).map_err(|_| "网卡名称不能包含 NUL 字符")?;
     let result = unsafe {
         setsockopt(
             socket.as_raw_fd(),
@@ -161,11 +189,6 @@ fn bind_interface(socket: &UdpSocket, name: &str) -> Result<(), String> {
         return Err(format!("绑定网卡失败：{}", std::io::Error::last_os_error()));
     }
     Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn bind_interface(_socket: &UdpSocket, _name: &str) -> Result<(), String> {
-    Err("指定网卡目前仅支持 Linux".into())
 }
 
 fn broadcast(s: &UdpSocket, bytes: &[u8]) -> Result<(), String> {

@@ -26,7 +26,17 @@ corxnet-config [-i|--interface <网卡>] set <MAC或后5字节> <参数> <值>
 corxnet-config completions <bash|zsh|fish>
 ```
 
-`-i/--interface` 可放在命令前或后。Linux 上可用 `ip link` 查看网卡名。未指定时使用系统路由选择的出口网卡。
+`-i/--interface` 可放在命令前或后。Linux 可用 `ip link`、macOS 可用 `networksetup -listallhardwareports`、Windows PowerShell 可用 `Get-NetAdapter` 查看网卡名。未指定时使用系统路由选择的出口网卡。
+
+程序支持 Linux x86_64、Windows x86_64 和 macOS Apple Silicon（arm64）。Linux 上 `-i` 按网卡名绑定 socket；Windows 和 macOS 上会查找该网卡的 IPv4 地址并绑定 socket。示例：
+
+```powershell
+.\corxnet-config.exe -i "以太网" scan
+```
+
+```sh
+./corxnet-config -i en0 scan
+```
 
 ## 扫描设备
 
@@ -134,6 +144,6 @@ corxnet-config completions fish > ~/.config/fish/completions/corxnet-config.fish
 
 ## 网络与协议
 
-程序使用 UDP 广播地址 `255.255.255.255`、设备端口 `60000` 和本机接收端口 `60001`。Linux 上 `-i/--interface` 将 socket 绑定到指定网卡；系统防火墙需允许 UDP `60001` 入站。指定网卡目前仅支持 Linux。
+程序使用 UDP 广播地址 `255.255.255.255`、设备端口 `60000` 和本机接收端口 `60001`。Linux 上 `-i/--interface` 将 socket 绑定到指定网卡；Windows 和 macOS 则绑定指定网卡上的 IPv4 地址。各系统防火墙需允许 UDP `60001` 入站。
 
 扫描请求为五个 `00` 字节。配置请求格式为 `命令字 + MAC后5字节 + 配置指令`。任何配置变更都需要保存命令才会生效。本工具仅提供本文列出的设备扫描、配置读取与网络参数设置命令。
