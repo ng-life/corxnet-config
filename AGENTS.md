@@ -1,4 +1,4 @@
-# mqtt-init 项目说明
+# corxnet-config 项目说明
 
 ## 项目目标
 
@@ -10,6 +10,8 @@
 - `Cargo.toml` / `Cargo.lock`：Rust 包和依赖版本；CLI 使用 `clap`，Shell 补全使用 `clap_complete`。
 - `README.md`：中文构建、使用、协议与补全指南。功能或命令变化时同步更新。
 - `docs/20.docx`：原始设备协议资料。变更报文或参数映射前先核对本文档。
+- `docs/MQTT.md`：根据用户抓包推测的 MQTT 报文格式、读写步骤和恢复方法；改动 MQTT 实现时同步维护。
+- `.github/workflows/release.yml`：GitHub Actions 三平台构建与 Release 工作流。
 
 ## 命令与协议边界
 
@@ -48,6 +50,7 @@
 ```sh
 cargo fmt
 cargo check
+cargo test
 cargo build --release
 cargo run -- --help
 cargo run -- completions bash
@@ -56,3 +59,9 @@ cargo run -- completions fish
 ```
 
 README 应继续说明网卡参数、CLI 使用完整 MAC（协议报文使用 MAC 后五字节）、协议端口、各设置项范围、保存行为和 Shell 补全安装方法。
+
+## 发布
+
+- 发布前更新 `Cargo.toml` 和 `Cargo.lock` 中的版本号，运行格式检查、编译和测试，并确认工作区无意外改动。
+- 将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签；标签会触发 Linux x86_64、Windows x86_64 和 macOS arm64 构建并创建 GitHub Release。
+- 发布完成后核对 Actions 运行结果和 Release 中的三个平台压缩包。
