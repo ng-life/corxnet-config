@@ -1,3 +1,5 @@
+mod web;
+
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
     process,
@@ -33,6 +35,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "启动内嵌网页和 HTTP 配置服务")]
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:8080", help = "HTTP 监听地址")]
+        listen: SocketAddr,
+    },
     #[command(about = "扫描局域网设备")]
     Scan,
     #[command(about = "读取设备网络配置")]
@@ -115,6 +122,7 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
+        Commands::Serve { listen } => web::serve(listen, cli.interface),
         Commands::Scan => scan(cli.interface.as_deref()),
         Commands::Read { mac, raw } => {
             read_config(parse_full_device_mac(&mac)?, cli.interface.as_deref(), raw)
@@ -187,7 +195,8 @@ const MQTT_FIELD_SLOTS: [usize; 5] = [101, 101, 101, 101, 102];
 const MQTT_TRAILER_OFFSET: usize = 520;
 const MQTT_PACKET_LEN: usize = 623;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MqttConfig {
     username: String,
     password: String,
@@ -326,7 +335,14 @@ fn receive_mqtt_config(
     broadcast(&socket, &encode_mqtt_read(mac))?;
     let mut buf = [0u8; 2048];
     let mut last_invalid = None;
+    let deadline = std::time::Instant::now() + TIMEOUT;
     loop {
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .ok_or("读取 MQTT 参数超时")?;
+        socket
+            .set_read_timeout(Some(remaining.max(Duration::from_millis(1))))
+            .map_err(|e| e.to_string())?;
         let (len, from) = match socket.recv_from(&mut buf) {
             Ok(packet) => packet,
             Err(e) => {
@@ -429,61 +445,124 @@ fn broadcast(s: &UdpSocket, bytes: &[u8]) -> Result<(), String> {
     .map(|_| ())
     .map_err(|e| format!("发送广播失败：{e}"))
 }
-fn scan(interface: Option<&str>) -> Result<(), String> {
+#[derive(serde::Serialize)]
+struct Device {
+    address: String,
+    mac: String,
+}
+
+fn discover(interface: Option<&str>) -> Result<Vec<Device>, String> {
     let s = socket(interface)?;
     broadcast(&s, &[0; 5])?;
-    println!("扫描设备中（监听 UDP {LOCAL_PORT}，等待 {TIMEOUT:?}）…");
+    let deadline = std::time::Instant::now() + TIMEOUT;
     let mut buf = [0u8; 2048];
-    let mut found = 0;
-    loop {
+    let mut devices = Vec::new();
+    while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+        s.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))
+            .map_err(|e| e.to_string())?;
         match s.recv_from(&mut buf) {
-            Ok((n, from)) => {
-                if n >= 8 && buf[0] == 0 && buf[1] == 1 {
-                    let mac = format_scanned_mac(&buf[2..7]);
-                    println!("设备：{from}  MAC：{mac}");
-                    found += 1;
-                } else {
-                    println!("收到来自 {from} 的非扫描响应（{n} 字节）");
+            Ok((n, from)) if n >= 8 && buf[..2] == [0, 1] => {
+                let mac = format_scanned_mac(&buf[2..7]);
+                if !devices.iter().any(|d: &Device| d.mac == mac) {
+                    devices.push(Device {
+                        address: from.to_string(),
+                        mac,
+                    });
                 }
             }
+            Ok(_) => {}
             Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
             {
                 break
             }
             Err(e) => return Err(format!("接收失败：{e}")),
         }
     }
-    if found == 0 {
+    Ok(devices)
+}
+
+fn scan(interface: Option<&str>) -> Result<(), String> {
+    println!("扫描设备中（监听 UDP {LOCAL_PORT}，等待 {TIMEOUT:?}）…");
+    let devices = discover(interface)?;
+    for d in &devices {
+        println!("设备：{}  MAC：{}", d.address, d.mac);
+    }
+    if devices.is_empty() {
         println!("未发现设备。请检查网卡、广播及防火墙设置。");
     }
     Ok(())
 }
-fn read_config(mac: [u8; 6], interface: Option<&str>, raw: bool) -> Result<(), String> {
+
+fn fetch_config(mac: [u8; 6], interface: Option<&str>) -> Result<(Vec<u8>, SocketAddr), String> {
     let s = socket(interface)?;
     let mut packet = vec![0x0a];
     packet.extend_from_slice(&mac[1..]);
-    packet.push(0x0a);
-    packet.extend_from_slice(&[0xff; 4]);
+    packet.extend_from_slice(&[0x0a, 0xff, 0xff, 0xff, 0xff]);
     broadcast(&s, &packet)?;
+    let deadline = std::time::Instant::now() + TIMEOUT;
     let mut buf = [0u8; 2048];
-    loop {
+    while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+        s.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))
+            .map_err(|e| e.to_string())?;
         let (n, from) = s
             .recv_from(&mut buf)
             .map_err(|e| format!("读取超时或接收失败：{e}"))?;
-        if n >= 256 {
-            print_config(&buf[..256]);
-            if raw {
-                print_raw(&buf[..n.min(buf.len())]);
-            }
-            println!("设备地址：{from}");
-            return Ok(());
+        // 配置响应中的 MAC 布局与 print_config 一致，避免误收其他设备的响应。
+        if n >= 256 && [buf[60], buf[61], buf[56], buf[57], buf[58], buf[59]][1..] == mac[1..] {
+            return Ok((buf[..n].to_vec(), from));
         }
-        eprintln!("收到来自 {from} 的短响应（{n} 字节）：{}", hex(&buf[..n]));
+    }
+    Err("读取配置超时，未收到目标 MAC 的配置响应".into())
+}
+
+fn read_config(mac: [u8; 6], interface: Option<&str>, raw: bool) -> Result<(), String> {
+    let (bytes, from) = fetch_config(mac, interface)?;
+    print_config(&bytes[..256]);
+    if raw {
+        print_raw(&bytes);
+    }
+    println!("设备地址：{from}");
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct NetworkConfig {
+    mode: u8,
+    port: u16,
+    ip: String,
+    target: String,
+    gateway: String,
+    netmask: String,
+    mac: String,
+    dhcp: u8,
+    heartbeat: u8,
+    hostname: String,
+    id: String,
+}
+
+fn parse_network_config(b: &[u8]) -> NetworkConfig {
+    let ip = |i| Ipv4Addr::new(b[i], b[i + 1], b[i + 2], b[i + 3]).to_string();
+    NetworkConfig {
+        mode: b[0],
+        port: u16::from_le_bytes([b[8], b[9]]),
+        ip: ip(40),
+        target: ip(44),
+        gateway: ip(48),
+        netmask: ip(52),
+        mac: format_mac(&[b[60], b[61], b[56], b[57], b[58], b[59]]),
+        dhcp: u8::from(b[254] == 1),
+        heartbeat: u8::from(b[252] == 1),
+        hostname: String::from_utf8_lossy(&b[131..131 + (b[130] as usize).min(56)]).into_owned(),
+        id: String::from_utf8_lossy(&b[181..181 + (b[180] as usize).min(12)]).into_owned(),
     }
 }
+
 fn print_config(b: &[u8]) {
+    let c = parse_network_config(b);
     let modes = [
         "TCP 单连接服务器",
         "TCP 客户端",
@@ -496,19 +575,10 @@ fn print_config(b: &[u8]) {
         "蚂蚁云开平台",
         "第三方云平台",
     ];
-    let ip = |i| Ipv4Addr::new(b[i], b[i + 1], b[i + 2], b[i + 3]).to_string();
-    let port = u16::from_le_bytes([b[8], b[9]]);
-    let mac = format!("{}:{}", hex(&b[60..62]), hex(&b[56..60]));
-    println!("设备配置（读取响应 256 字节）\n  工作模式：{}（{}）\n  端口：{port}\n  本地 IP：{}\n  目标 IP：{}\n  网关：{}\n  子网掩码：{}\n  MAC：{}\n  DHCP：{}\n  心跳：{}",
-        b[0], modes.get(b[0] as usize).copied().unwrap_or("未知"), ip(40), ip(44), ip(48), ip(52),
-        mac, if b[254] == 1 {"开启"} else {"关闭"}, if b[252] == 1 {"开启"} else {"关闭"});
-    let dns_len = (b[130] as usize).min(56);
-    let id_len = (b[180] as usize).min(12);
-    println!(
-        "  DNS 网址：{}\n  唯一 ID：{}",
-        String::from_utf8_lossy(&b[131..131 + dns_len]),
-        String::from_utf8_lossy(&b[181..181 + id_len])
-    );
+    println!("设备配置（读取响应 256 字节）\n  工作模式：{}（{}）\n  端口：{}\n  本地 IP：{}\n  目标 IP：{}\n  网关：{}\n  子网掩码：{}\n  MAC：{}\n  DHCP：{}\n  心跳：{}",
+        c.mode, modes.get(c.mode as usize).copied().unwrap_or("未知"), c.port, c.ip, c.target, c.gateway, c.netmask, c.mac,
+        if c.dhcp == 1 { "开启" } else { "关闭" }, if c.heartbeat == 1 { "开启" } else { "关闭" });
+    println!("  DNS 网址：{}\n  唯一 ID：{}", c.hostname, c.id);
 }
 
 fn print_raw(bytes: &[u8]) {
@@ -535,27 +605,41 @@ fn print_raw(bytes: &[u8]) {
 }
 
 fn configure(mac: [u8; 6], payload: Vec<u8>, interface: Option<&str>) -> Result<(), String> {
+    let message = apply_setting(mac, payload, interface)?;
+    println!("{message}");
+    Ok(())
+}
+
+fn apply_setting(
+    mac: [u8; 6],
+    payload: Vec<u8>,
+    interface: Option<&str>,
+) -> Result<String, String> {
     let s = socket(interface)?;
     let mut packet = vec![payload[0]];
     packet.extend_from_slice(&mac[1..]);
     packet.extend_from_slice(&payload);
     broadcast(&s, &packet)?;
-    match s.recv_from(&mut [0u8; 512]) {
-        Ok((n, from)) => println!("收到 {from} 的响应（{n} 字节）"),
+    let acknowledged = match s.recv_from(&mut [0u8; 512]) {
+        Ok(_) => true,
         Err(e)
             if e.kind() == std::io::ErrorKind::WouldBlock
                 || e.kind() == std::io::ErrorKind::TimedOut =>
         {
-            eprintln!("配置响应超时；仍将尝试发送保存命令。")
+            false
         }
         Err(e) => return Err(format!("接收配置响应失败：{e}")),
-    }
+    };
     let mut save = vec![0xff];
     save.extend_from_slice(&mac[1..]);
     save.extend_from_slice(&[0xff; 4]);
     broadcast(&s, &save)?;
-    println!("保存命令已发送。");
-    Ok(())
+    Ok(if acknowledged {
+        "保存命令已发送，请重新读取核对。"
+    } else {
+        "配置响应超时；保存命令已发送，请重新读取核对。"
+    }
+    .into())
 }
 fn make_setting(key: Setting, v: &[String]) -> Result<Vec<u8>, String> {
     let one = || {

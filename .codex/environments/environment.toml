@@ -1,0 +1,10 @@
+version = 1
+name = "corxnet-config"
+
+[setup]
+script = ""
+
+[[actions]]
+name = "Run"
+icon = "run"
+command = "cargo run -- serve"

@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Corxnet · 控制器配置</title>
+    <style>
+      :root {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+          sans-serif;
+        color: #1f2937;
+        background: #f0f2f5;
+        font-size: 14px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header {
+        height: 64px;
+        background: #001529;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 28px;
+      }
+      header strong {
+        font-size: 20px;
+        letter-spacing: 0.5px;
+      }
+      header span {
+        color: #b6c4d3;
+        font-size: 13px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr);
+        gap: 24px;
+        padding: 24px;
+        max-width: 1440px;
+        margin: auto;
+      }
+      aside,
+      .panel {
+        background: white;
+        border-radius: 6px;
+        box-shadow: 0 2px 8px #00000008;
+        border: 1px solid #e8e8e8;
+      }
+      aside {
+        align-self: start;
+        padding: 20px;
+      }
+      .heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+      h1 {
+        font-size: 23px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 0;
+      }
+      p {
+        color: #6b7280;
+        line-height: 1.7;
+        margin: 8px 0 20px;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        border: 1px solid #d9d9d9;
+        background: white;
+        border-radius: 4px;
+        padding: 8px 15px;
+        color: #374151;
+        transition: 0.15s;
+      }
+      button:hover {
+        color: #1677ff;
+        border-color: #1677ff;
+      }
+      button.primary {
+        background: #1677ff;
+        border-color: #1677ff;
+        color: white;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      input,
+      select {
+        width: 100%;
+        border: 1px solid #d9d9d9;
+        border-radius: 4px;
+        background: white;
+        padding: 9px 11px;
+        color: #1f2937;
+        min-width: 0;
+      }
+      input:focus,
+      select:focus {
+        outline: 2px solid #1677ff22;
+        border-color: #1677ff;
+      }
+      label {
+        display: block;
+        color: #4b5563;
+        margin-bottom: 7px;
+      }
+      .manual {
+        margin-top: 24px;
+        border-top: 1px solid #f0f0f0;
+        padding-top: 20px;
+      }
+      .manual button {
+        width: 100%;
+        margin-top: 10px;
+      }
+      #devices {
+        margin-top: 18px;
+        display: grid;
+        gap: 8px;
+      }
+      .device {
+        text-align: left;
+        padding: 12px;
+        width: 100%;
+      }
+      .device span {
+        display: block;
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 5px;
+      }
+      .device.active {
+        border-color: #1677ff;
+        background: #e6f4ff;
+      }
+      .empty {
+        padding: 28px 10px;
+        color: #8c8c8c;
+        text-align: center;
+        line-height: 1.8;
+        background: #fafafa;
+        border: 1px dashed #ddd;
+      }
+      .panel {
+        margin-top: 20px;
+      }
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid #eee;
+        padding: 0 24px;
+        gap: 28px;
+      }
+      .tabs button {
+        border: 0;
+        border-radius: 0;
+        padding: 17px 0;
+        background: transparent;
+      }
+      .tabs button.active {
+        color: #1677ff;
+        border-bottom: 2px solid #1677ff;
+      }
+      .content {
+        padding: 24px;
+      }
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+      .hint {
+        font-size: 13px;
+        color: #6b7280;
+      }
+      .fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 22px 28px;
+      }
+      .field-row {
+        display: flex;
+        gap: 8px;
+      }
+      .field-row button {
+        flex-shrink: 0;
+      }
+      .footer {
+        border-top: 1px solid #eee;
+        margin-top: 26px;
+        padding-top: 20px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      #status {
+        margin-top: 20px;
+        border-radius: 4px;
+        padding: 12px 16px;
+        background: #e6f4ff;
+        border: 1px solid #91caff;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      #status.error {
+        background: #fff2f0;
+        border-color: #ffccc7;
+        color: #a8071a;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      details {
+        margin-top: 24px;
+        color: #6b7280;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-all;
+        font-size: 12px;
+        max-height: 240px;
+        overflow: auto;
+      }
+      .badge {
+        font-size: 12px;
+        background: #f0f5ff;
+        color: #1677ff;
+        padding: 5px 10px;
+        border-radius: 4px;
+      }
+      dialog {
+        border: 0;
+        border-radius: 8px;
+        padding: 24px;
+        max-width: 440px;
+        box-shadow: 0 12px 40px #0003;
+      }
+      dialog::backdrop {
+        background: #0006;
+      }
+      dialog p {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .dialog-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+      }
+      @media (max-width: 800px) {
+        header {
+          padding: 0 16px;
+        }
+        header span {
+          display: none;
+        }
+        .layout {
+          grid-template-columns: 1fr;
+          padding: 16px;
+          gap: 18px;
+        }
+        .fields {
+          grid-template-columns: 1fr;
+        }
+        .content {
+          padding: 18px;
+        }
+        .toolbar {
+          align-items: flex-start;
+          flex-wrap: wrap;
+        }
+        .heading {
+          flex-wrap: wrap;
+        }
+        aside {
+          padding: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Corxnet <span style="margin-left: 12px">控制器配置</span></strong
+      ><span id="interface">正在获取网卡信息…</span>
+    </header>
+    <div class="layout">
+      <aside>
+        <div class="heading">
+          <h2>局域网设备</h2>
+          <button id="scan" class="primary">扫描设备</button>
+        </div>
+        <p>扫描当前网卡上的兼容控制器。</p>
+        <div id="devices" class="empty">
+          尚未扫描<br />点击「扫描设备」开始发现
+        </div>
+        <div class="manual">
+          <label for="mac">手动输入完整 MAC</label
+          ><input
+            id="mac"
+            placeholder="00:90:E2:D7:20:60"
+            autocomplete="off"
+          /><button id="select">选择设备</button>
+        </div>
+      </aside>
+      <main>
+        <div class="heading">
+          <div>
+            <h1>设备配置</h1>
+            <span class="hint" id="selected"
+              >请选择设备，或输入完整 MAC 地址</span
+            >
+          </div>
+          <span class="badge">UDP 网络配置</span>
+        </div>
+        <div id="status" role="status" hidden></div>
+        <section class="panel">
+          <nav class="tabs" aria-label="参数类型">
+            <button id="network-tab" class="active">网络参数</button
+            ><button id="mqtt-tab">MQTT 参数</button>
+          </nav>
+          <div id="network" class="content">
+            <div class="toolbar">
+              <span class="hint">每次保存一项参数，保存后请重新读取核对。</span
+              ><button id="read" class="primary">读取参数</button>
+            </div>
+            <div id="network-fields" class="fields"></div>
+            <details>
+              <summary>查看原始读取响应</summary>
+              <pre id="raw">尚未读取</pre>
+            </details>
+          </div>
+          <div id="mqtt" class="content" hidden>
+            <div class="toolbar">
+              <span class="hint">先读取原值，再编辑完整 MQTT 配置。</span
+              ><button id="mqtt-read" class="primary">读取 MQTT 参数</button>
+            </div>
+            <form id="mqtt-form" autocomplete="off">
+              <div id="mqtt-fields" class="fields"></div>
+              <div class="footer">
+                <button id="mqtt-save" class="primary" type="submit" disabled>
+                  保存 MQTT 参数</button
+                ><button id="mqtt-restore" type="button" disabled>
+                  恢复首次读取的原值</button
+                ><span class="hint"
+                  >保存后自动复读核验；原值仅保留在本次服务内存中。</span
+                >
+              </div>
+            </form>
+          </div>
+        </section>
+        <p class="hint">
+          网络参数与 MQTT 参数使用各自的配置协议。更改 IP、DHCP 或 MAC
+          后，请重新扫描设备。
+        </p>
+      </main>
+    </div>
+    <dialog id="confirm">
+      <h2>确认设备配置</h2>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button id="cancel">取消</button
+        ><button id="proceed" class="primary">确认保存</button>
+      </div>
+    </dialog>
+    <script>
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      const modes = [
+        "TCP 单连接服务器",
+        "TCP 客户端",
+        "UDP 服务器",
+        "MODBUS 服务器",
+        "UDP 客户端",
+        "MODBUS 客户端",
+        "TCP 多连接服务器",
+        "自建 MQTT 服务器",
+        "蚂蚁云开平台",
+        "第三方云平台",
+      ];
+      const definitions = [
+        ["ip", "本地 IP", "IPv4 地址"],
+        ["target", "目标 IP", "IPv4 地址"],
+        ["gateway", "网关", "IPv4 地址"],
+        ["netmask", "子网掩码", "IPv4 地址"],
+        ["port", "端口", "1–65535"],
+        ["mode", "工作模式", modes],
+        ["mac", "MAC 地址", "完整 MAC 地址"],
+        ["dhcp", "DHCP", ["静态 IP", "DHCP"]],
+        ["dns", "DNS 地址", "IPv4 地址（读取响应未定义此字段）"],
+        ["hostname", "DNS 网址", "最多 56 字节"],
+        ["id", "唯一 ID", "最多 12 字节"],
+        ["heartbeat", "心跳", ["关闭", "开启"]],
+      ];
+      const mqttDefinitions = [
+        ["username", "用户名", 100],
+        ["password", "密码", 100],
+        ["subscribe_topic", "订阅主题", 100],
+        ["publish_topic", "发布主题", 100],
+        ["device_id", "设备 ID", 101],
+      ];
+      let selected = "",
+        busy = false;
+      const mqttRead = new Set();
+      function message(text, error = false) {
+        $("status").hidden = false;
+        $("status").classList.toggle("error", error);
+        $("status").textContent = text;
+      }
+      function update() {
+        document.querySelectorAll("button").forEach((b) => {
+          b.disabled = busy;
+        });
+        document
+          .querySelectorAll("[data-save]")
+          .forEach((b) => (b.disabled = busy || !selected));
+        $("read").disabled = busy || !selected;
+        $("mqtt-read").disabled = busy || !selected;
+        $("mqtt-save").disabled = busy || !mqttRead.has(selected);
+        $("mqtt-restore").disabled = busy || !mqttRead.has(selected);
+        document
+          .querySelectorAll("#mqtt-fields input")
+          .forEach((i) => (i.disabled = busy || !mqttRead.has(selected)));
+        document
+          .querySelectorAll("#network-fields input,#network-fields select,#mac")
+          .forEach((i) => (i.disabled = busy));
+      }
+      async function api(path, data = {}) {
+        if (busy) throw Error("设备操作正在执行，请稍后重试");
+        busy = true;
+        update();
+        message("正在处理，请稍候…");
+        try {
+          const r = await fetch("/api/" + path, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Corxnet-Request": "1",
+            },
+            body: JSON.stringify(data),
+          });
+          const result = await r.json();
+          if (!r.ok) throw Error(result.error || "请求失败");
+          return result;
+        } finally {
+          busy = false;
+          update();
+        }
+      }
+      function run(fn) {
+        return async () => {
+          try {
+            await fn();
+          } catch (e) {
+            message(e.message, true);
+          }
+        };
+      }
+      function choose(mac) {
+        if (busy) return;
+        selected = mac.toUpperCase();
+        $("mac").value = selected;
+        $("selected").textContent = "当前设备 · " + selected;
+        document
+          .querySelectorAll(".device")
+          .forEach((b) =>
+            b.classList.toggle("active", b.dataset.mac === selected),
+          );
+        document
+          .querySelectorAll("#network-fields input")
+          .forEach((i) => (i.value = ""));
+        document
+          .querySelectorAll("#network-fields select")
+          .forEach((i) => (i.value = ""));
+        mqttRead.delete(selected);
+        document
+          .querySelectorAll("#mqtt-fields input")
+          .forEach((i) => (i.value = ""));
+        $("raw").textContent = "尚未读取";
+        update();
+      }
+      function confirmAction(text) {
+        return new Promise((resolve) => {
+          $("confirm-text").textContent = text;
+          $("confirm").showModal();
+          const finish = (value) => {
+            $("confirm").close();
+            resolve(value);
+          };
+          $("cancel").onclick = () => finish(false);
+          $("proceed").onclick = () => finish(true);
+          $("confirm").oncancel = () => resolve(false);
+        });
+      }
+      for (const [key, label, placeholder] of definitions) {
+        const field = document.createElement("div");
+        const l = document.createElement("label");
+        l.htmlFor = "net-" + key;
+        l.textContent = label;
+        const row = document.createElement("div");
+        row.className = "field-row";
+        const input = document.createElement(
+          Array.isArray(placeholder) ? "select" : "input",
+        );
+        input.id = "net-" + key;
+        if (Array.isArray(placeholder)) {
+          const blank = new Option("请选择", "");
+          input.add(blank);
+          placeholder.forEach((v, i) => input.add(new Option(v, String(i))));
+        } else input.placeholder = placeholder;
+        const save = document.createElement("button");
+        save.textContent = "保存";
+        save.dataset.save = key;
+        save.onclick = run(async () => {
+          if (!selected) throw Error("请先选择设备");
+          if (!input.value && !["id", "hostname"].includes(key))
+            throw Error("请填写" + label);
+          const mac = selected;
+          if (
+            !(await confirmAction(
+              "设备：" +
+                mac +
+                "\n设置" +
+                label +
+                "为：" +
+                input.value +
+                "\n将发送单项配置和保存命令。",
+            ))
+          )
+            return;
+          const r = await api("set", { mac, setting: key, value: input.value });
+          message(r.message);
+        });
+        row.append(input, save);
+        field.append(l, row);
+        $("network-fields").append(field);
+      }
+      for (const [key, label, max] of mqttDefinitions) {
+        const field = document.createElement("div");
+        const l = document.createElement("label");
+        l.htmlFor = "mqtt-" + key;
+        l.textContent = label;
+        const input = document.createElement("input");
+        input.id = "mqtt-" + key;
+        input.maxLength = max;
+        input.placeholder = "ASCII，最多 " + max + " 字节";
+        input.autocomplete = "off";
+        field.append(l, input);
+        $("mqtt-fields").append(field);
+      }
+      $("scan").onclick = run(async () => {
+        const r = await api("scan");
+        $("devices").replaceChildren();
+        $("devices").className = r.devices.length ? "" : "empty";
+        for (const d of r.devices) {
+          const b = document.createElement("button");
+          b.className = "device";
+          b.dataset.mac = d.mac;
+          b.append(document.createTextNode(d.mac));
+          const info = document.createElement("span");
+          info.textContent = d.address;
+          b.append(info);
+          b.onclick = () => choose(d.mac);
+          $("devices").append(b);
+        }
+        if (!r.devices.length)
+          $("devices").textContent = "未发现设备，请检查网卡、广播及防火墙。";
+        message("扫描完成，发现 " + r.devices.length + " 台设备。");
+      });
+      $("select").onclick = run(async () => {
+        const value = $("mac").value.trim();
+        if (!/^([0-9a-f]{12}|([0-9a-f]{2}:){5}[0-9a-f]{2})$/i.test(value))
+          throw Error("请输入 12 位十六进制或冒号分隔的完整 MAC");
+        choose(value.replace(/:/g, "").match(/../g).join(":"));
+        message("已选择设备，可读取参数。");
+      });
+      $("read").onclick = run(async () => {
+        const r = await api("read", { mac: selected });
+        for (const [key] of definitions) {
+          $("net-" + key).value = r.config[key] ?? "";
+        }
+        $("raw").textContent = r.raw;
+        message("网络参数读取完成 · " + r.address);
+      });
+      $("mqtt-read").onclick = run(async () => {
+        const r = await api("mqtt/read", { mac: selected });
+        for (const [key] of mqttDefinitions)
+          $("mqtt-" + key).value = r.config[key];
+        mqttRead.add(selected);
+        update();
+        message("MQTT 参数读取完成，首次原值已保留在服务内存中。");
+      });
+      $("mqtt-form").onsubmit = async (e) => {
+        e.preventDefault();
+        await run(async () => {
+          const config = Object.fromEntries(
+            mqttDefinitions.map(([k]) => [k, $("mqtt-" + k).value]),
+          );
+          if (
+            !(await confirmAction(
+              "设备：" +
+                selected +
+                "\n将整体替换全部五个 MQTT 字段，并复读核验。",
+            ))
+          )
+            return;
+          const r = await api("mqtt/set", { mac: selected, config });
+          message(r.message);
+        })();
+      };
+      $("mqtt-restore").onclick = run(async () => {
+        if (
+          !(await confirmAction(
+            "设备：" +
+              selected +
+              "\n将恢复本次服务首次读取的 MQTT 原值，并复读核验。",
+          ))
+        )
+          return;
+        const r = await api("mqtt/restore", { mac: selected });
+        for (const [key] of mqttDefinitions)
+          $("mqtt-" + key).value = r.config[key];
+        message(r.message);
+      });
+      for (const tab of ["network", "mqtt"])
+        $(tab + "-tab").onclick = () => {
+          for (const name of ["network", "mqtt"]) {
+            $(name).hidden = name !== tab;
+            $(name + "-tab").classList.toggle("active", name === tab);
+          }
+        };
+      fetch("/api/info")
+        .then((r) => r.json())
+        .then(
+          (r) =>
+            ($("interface").textContent =
+              "网卡：" + (r.interface || "系统默认出口")),
+        )
+        .catch(() => ($("interface").textContent = "无法获取网卡信息"));
+      update();
+    </script>
+  </body>
+</html>

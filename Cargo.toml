@@ -1,6 +1,6 @@
 [package]
 name = "corxnet-config"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "UDP network configuration utility for Corxnet controllers"
 
@@ -8,3 +8,7 @@ description = "UDP network configuration utility for Corxnet controllers"
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 network-interface = "2.0.5"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"

@@ -25,6 +25,7 @@ corxnet-config [-i|--interface <网卡>] read <完整MAC> [--raw]
 corxnet-config [-i|--interface <网卡>] set <完整MAC> <参数> <值>
 corxnet-config [-i|--interface <网卡>] mqtt-read <完整MAC>
 corxnet-config [-i|--interface <网卡>] mqtt-set <完整MAC> --username <用户名> --password <密码> --subscribe-topic <主题> --publish-topic <主题> --device-id <ID>
+corxnet-config [-i|--interface <网卡>] serve [--listen <IP:端口>]
 corxnet-config completions <bash|zsh|fish>
 ```
 
@@ -41,6 +42,36 @@ MQTT 配置的协议推测、读写命令和字段限制见 [docs/MQTT.md](docs/
 ```sh
 ./corxnet-config -i en0 scan
 ```
+
+## 网页配置服务
+
+```sh
+corxnet-config -i en0 serve
+# 需要同一局域网内其他电脑访问时：
+corxnet-config -i en0 serve --listen 0.0.0.0:8080
+```
+
+启动后使用浏览器访问 `http://127.0.0.1:8080`。监听全部地址时，其他电脑使用运行程序的电脑 IP 访问，例如 `http://192.168.0.10:8080`。网页通过服务所在电脑的网卡收发 UDP；`--interface` 在启动时确定。按 Ctrl+C 停止服务。
+
+HTML、CSS 和 JavaScript 通过 `include_str!` 内嵌到可执行文件，运行时无需外部网页文件、Node.js 或 CDN。页面采用 Ant Design Pro 风格布局，提供设备扫描、网络参数读取与单项保存、MQTT 参数读取与整体保存；也可手动输入完整 MAC。原始读取响应可在网页展开查看。DNS 地址的读取偏移未在协议中定义，页面只提供 DNS 设置，不推断读取值。
+
+设备操作按顺序执行，避免并发争用 UDP `60001`。网页写入前显示确认弹窗。网络参数保存结果表示报文已发送，应重新读取核对；更改 IP、DHCP 或 MAC 后请重新扫描，并使用新的 MAC。
+
+MQTT 编辑必须先读取。服务为每个 MAC 保留本次服务首次读取的五个原值（最多 128 台设备），仅存于内存；后续读取不覆盖此恢复基线。写入前再次读取，成功后才发送保存帧，并自动复读比对。发送后超时或不一致会提示核验失败，不会自动宣称保存成功；可点击“恢复首次读取的原值”并复读核验。重启服务会清除原值。网页明文展示 MQTT 用户名和密码，不写入浏览器存储或服务日志。
+
+服务不提供登录认证，只应在可信网络使用。默认仅本机访问；扩大监听范围会允许可访问该端口的用户配置设备。HTTP 不加密，凭据会以明文传输。设备接口不启用跨域访问，校验 Origin 与请求标记，并只接受 IP 或 `localhost` 作为访问地址。
+
+HTTP 接口返回 JSON。设备操作使用 POST，请求需携带 `X-Corxnet-Request: 1`；浏览器 Origin 必须与服务地址一致：
+
+| 接口 | 请求内容 |
+| --- | --- |
+| `GET /api/info` | 查看启动时选定的网卡 |
+| `POST /api/scan` | `{}` |
+| `POST /api/read` | `mac` |
+| `POST /api/set` | `mac`、`setting`、`value`，参数名和取值与 CLI 一致 |
+| `POST /api/mqtt/read` | `mac`，并保留首次原值 |
+| `POST /api/mqtt/set` | `mac`、`config`，后者包含 `username`、`password`、`subscribe_topic`、`publish_topic`、`device_id` |
+| `POST /api/mqtt/restore` | `mac`，恢复首次原值并核验 |
 
 ## 扫描设备
 
