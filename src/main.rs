@@ -1,5 +1,4 @@
 use std::{
-    io::Read,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
     process,
     time::Duration,
@@ -38,17 +37,14 @@ enum Commands {
     Scan,
     #[command(about = "读取设备网络配置")]
     Read {
-        #[arg(
-            value_name = "MAC或后5字节",
-            help = "设备完整 MAC 或协议返回的 MAC 后五字节"
-        )]
+        #[arg(value_name = "完整MAC", help = "设备完整 MAC 地址")]
         mac: String,
         #[arg(long, help = "打印完整 256 字节响应")]
         raw: bool,
     },
     #[command(about = "设置一项设备参数并保存")]
     Set {
-        #[arg(value_name = "MAC或后5字节")]
+        #[arg(value_name = "完整MAC")]
         mac: String,
         #[arg(value_enum, value_name = "参数")]
         setting: Setting,
@@ -59,33 +55,15 @@ enum Commands {
     MqttRead {
         #[arg(value_name = "MAC", help = "设备完整 MAC 地址")]
         mac: String,
-        #[arg(long, help = "显示用户名和密码；默认隐藏")]
-        show_secrets: bool,
     },
     #[command(about = "保存设备 MQTT 配置")]
     MqttSet {
         #[arg(value_name = "MAC", help = "设备完整 MAC 地址")]
         mac: String,
-        #[arg(
-            long,
-            conflicts_with_all = ["username", "password"],
-            help = "从标准输入读取用户名和密码"
-        )]
-        credentials_stdin: bool,
-        #[arg(
-            long,
-            value_name = "用户名",
-            requires = "password",
-            conflicts_with = "credentials_stdin"
-        )]
-        username: Option<String>,
-        #[arg(
-            long,
-            value_name = "密码",
-            requires = "username",
-            conflicts_with = "credentials_stdin"
-        )]
-        password: Option<String>,
+        #[arg(long, value_name = "用户名")]
+        username: String,
+        #[arg(long, value_name = "密码")]
+        password: String,
         #[arg(
             long,
             value_name = "主题",
@@ -139,25 +117,22 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Commands::Scan => scan(cli.interface.as_deref()),
         Commands::Read { mac, raw } => {
-            read_config(parse_device_mac(&mac)?, cli.interface.as_deref(), raw)
+            read_config(parse_full_device_mac(&mac)?, cli.interface.as_deref(), raw)
         }
         Commands::Set {
             mac,
             setting,
             value,
         } => configure(
-            parse_device_mac(&mac)?,
+            parse_full_device_mac(&mac)?,
             make_setting(setting, &value)?,
             cli.interface.as_deref(),
         ),
-        Commands::MqttRead { mac, show_secrets } => mqtt_read(
-            parse_full_device_mac(&mac)?,
-            cli.interface.as_deref(),
-            show_secrets,
-        ),
+        Commands::MqttRead { mac } => {
+            mqtt_read(parse_full_device_mac(&mac)?, cli.interface.as_deref())
+        }
         Commands::MqttSet {
             mac,
-            credentials_stdin,
             username,
             password,
             subscribe_topic,
@@ -165,15 +140,6 @@ fn run(cli: Cli) -> Result<(), String> {
             device_id,
         } => {
             let mac = parse_full_device_mac(&mac)?;
-            let (username, password) =
-                match (credentials_stdin, username, password) {
-                    (true, None, None) => read_credentials_stdin()?,
-                    (false, Some(username), Some(password)) => (username, password),
-                    _ => return Err(
-                        "凭据请同时指定 --username 和 --password，或单独使用 --credentials-stdin"
-                            .into(),
-                    ),
-                };
             let config = MqttConfig {
                 username,
                 password,
@@ -341,44 +307,12 @@ fn parse_mqtt_response(packet: &[u8], expected_mac: [u8; 6]) -> Result<MqttConfi
     })
 }
 
-fn read_credentials_stdin() -> Result<(String, String), String> {
-    let mut input = String::new();
-    std::io::stdin()
-        .take(205)
-        .read_to_string(&mut input)
-        .map_err(|e| format!("读取标准输入 MQTT 凭据失败：{e}"))?;
-    if input.len() > 204 {
-        return Err("标准输入凭据超过 100 字节用户名和 100 字节密码的最大长度".into());
-    }
-    let mut lines = input.lines();
-    let username = lines.next().ok_or("标准输入第一行须为 MQTT 用户名")?;
-    let password = lines.next().ok_or("标准输入第二行须为 MQTT 密码")?;
-    if lines.next().is_some() {
-        return Err("标准输入只能包含用户名和密码两行".into());
-    }
-    Ok((username.to_string(), password.to_string()))
-}
-
-fn mqtt_read(mac: [u8; 6], interface: Option<&str>, show_secrets: bool) -> Result<(), String> {
+fn mqtt_read(mac: [u8; 6], interface: Option<&str>) -> Result<(), String> {
     let socket = socket(interface)?;
     let (config, from) = receive_mqtt_config(&socket, mac)?;
     println!("MQTT 配置（设备 {from}）");
-    println!(
-        "  用户名：{}",
-        if show_secrets {
-            config.username.as_str()
-        } else {
-            "********（使用 --show-secrets 显示）"
-        }
-    );
-    println!(
-        "  密码：{}",
-        if show_secrets {
-            config.password.as_str()
-        } else {
-            "********（使用 --show-secrets 显示）"
-        }
-    );
+    println!("  用户名：{}", config.username);
+    println!("  密码：{}", config.password);
     println!("  订阅主题：{}", config.subscribe_topic);
     println!("  发布主题：{}", config.publish_topic);
     println!("  设备 ID：{}", config.device_id);
@@ -505,7 +439,7 @@ fn scan(interface: Option<&str>) -> Result<(), String> {
         match s.recv_from(&mut buf) {
             Ok((n, from)) => {
                 if n >= 8 && buf[0] == 0 && buf[1] == 1 {
-                    let mac = format_mac(&buf[2..7]);
+                    let mac = format_scanned_mac(&buf[2..7]);
                     println!("设备：{from}  MAC：{mac}");
                     found += 1;
                 } else {
@@ -691,19 +625,6 @@ fn parse_switch(s: &str) -> Result<u8, String> {
         _ => Err("值只能是 0 或 1".into()),
     }
 }
-fn parse_device_mac(s: &str) -> Result<[u8; 6], String> {
-    let parts: Vec<_> = s.split(|c| c == ':' || c == '-').collect();
-    if parts.len() == 5 {
-        let mut mac = [0u8; 6];
-        for (i, part) in parts.iter().enumerate() {
-            mac[i + 1] = u8::from_str_radix(part, 16).map_err(|_| "MAC 地址后五字节包含无效值")?;
-        }
-        Ok(mac)
-    } else {
-        parse_mac(s)
-    }
-}
-
 fn parse_mac(s: &str) -> Result<[u8; 6], String> {
     let parts: Vec<_> = s.split(|c| c == ':' || c == '-').collect();
     if parts.len() != 6 {
@@ -720,6 +641,12 @@ fn format_mac(b: &[u8]) -> String {
         .map(|x| format!("{x:02X}"))
         .collect::<Vec<_>>()
         .join(":")
+}
+
+fn format_scanned_mac(suffix: &[u8]) -> String {
+    let mut mac = [0; 6];
+    mac[1..].copy_from_slice(suffix);
+    format_mac(&mac)
 }
 fn hex(b: &[u8]) -> String {
     b.iter()
@@ -775,7 +702,7 @@ mod mqtt_tests {
     }
 
     #[test]
-    fn mqtt_set_accepts_cli_credentials_or_stdin_exclusively() {
+    fn mqtt_set_requires_plaintext_credentials_as_arguments() {
         let common = [
             "corxnet-config",
             "mqtt-set",
@@ -791,23 +718,22 @@ mod mqtt_tests {
         direct.extend(["--username", "user", "--password", "pass"]);
         assert!(Cli::try_parse_from(direct).is_ok());
 
-        let mut stdin = common.to_vec();
-        stdin.push("--credentials-stdin");
-        assert!(Cli::try_parse_from(stdin).is_ok());
-
         let mut incomplete = common.to_vec();
         incomplete.extend(["--username", "user"]);
         assert!(Cli::try_parse_from(incomplete).is_err());
+    }
 
-        let mut mixed = common.to_vec();
-        mixed.extend([
-            "--credentials-stdin",
-            "--username",
-            "user",
-            "--password",
-            "pass",
-        ]);
-        assert!(Cli::try_parse_from(mixed).is_err());
+    #[test]
+    fn cli_mac_arguments_require_full_addresses_and_scan_displays_full_mac() {
+        assert_eq!(
+            parse_full_device_mac("00:90:E2:D7:20:60").unwrap(),
+            [0x00, 0x90, 0xe2, 0xd7, 0x20, 0x60]
+        );
+        assert!(parse_full_device_mac("90:E2:D7:20:60").is_err());
+        assert_eq!(
+            format_scanned_mac(&[0x90, 0xe2, 0xd7, 0x20, 0x60]),
+            "00:90:E2:D7:20:60"
+        );
     }
 
     #[test]

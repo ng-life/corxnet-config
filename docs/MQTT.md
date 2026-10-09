@@ -44,36 +44,17 @@ UDP 设备端口为 `60000`，本机端口为 `60001`，使用广播地址 `255.
 corxnet-config -i br0 mqtt-read 00:90:E2:D7:20:60
 ```
 
-完整 MAC 必须提供。默认隐藏用户名和密码。确实需要查看时加 `--show-secrets`：
+必须提供完整 MAC。读取结果会明文显示全部 MQTT 字段，包括用户名和密码：
 
 ```sh
-corxnet-config -i br0 mqtt-read 00:90:E2:D7:20:60 --show-secrets
+corxnet-config -i br0 mqtt-read 00:90:E2:D7:20:60
 ```
 
 此命令只发送读取广播，不改动设备参数。
 
 ## 保存
 
-`mqtt-set` 要求一次提供全部五个字段，避免未提供的字段被意外清空。可选择标准输入或命令行参数提供用户名和密码，二者不能混用。
-
-推荐通过标准输入提供凭据，避免它们出现在命令参数中：
-
-```sh
-read -r -s -p 'MQTT username: ' MQTT_USERNAME
-printf '\n'
-read -r -s -p 'MQTT password: ' MQTT_PASSWORD
-printf '\n'
-printf '%s\n%s\n' "$MQTT_USERNAME" "$MQTT_PASSWORD" | corxnet-config -i br0 mqtt-set 00:90:E2:D7:20:60 \
-  --credentials-stdin \
-  --subscribe-topic 'SFQ257YC4K/WH-01/control' \
-  --publish-topic 'SFQ257YC4K/WH-01/event' \
-  --device-id 'SFQ257YC4KWH-01'
-unset MQTT_USERNAME MQTT_PASSWORD
-```
-
-这会广播 `44 AA ... AA 44` 保存帧。工具不会回显 MQTT 凭据。保存后重新运行 `mqtt-read` 核验。
-
-也可以直接使用 `--username` 和 `--password`：
+`mqtt-set` 要求一次提供全部五个字段，避免未提供的字段被意外清空。用户名和密码通过参数明文指定：
 
 ```sh
 corxnet-config -i br0 mqtt-set 00:90:E2:D7:20:60 \
@@ -84,11 +65,11 @@ corxnet-config -i br0 mqtt-set 00:90:E2:D7:20:60 \
   --device-id 'SFQ257YC4KWH-01'
 ```
 
-命令行参数可能被 shell 历史或系统进程信息记录；有凭据暴露风险时使用标准输入方式。
+此命令会广播 `44 AA ... AA 44` 保存帧。保存后重新运行 `mqtt-read` 核验。读取输出及写入参数均为明文，终端日志、shell 历史或系统进程信息可能留存凭据；请勿将凭据写入仓库或公开日志。
 
 ## 修改前备份与恢复
 
-写入会整体替换 MQTT 参数。先用读取命令记录当前五个字段（用户名和密码需显式加 `--show-secrets` 并安全保管），再执行写入。若结果不符合预期，使用备份的五个原值运行 `mqtt-set` 恢复，并再次读取核验。不要把含凭据的终端输出、命令历史或备份文件提交到仓库。
+写入会整体替换 MQTT 参数。先用读取命令记录当前五个字段（明文显示，需安全保管），再执行写入。若结果不符合预期，使用备份的五个原值运行 `mqtt-set` 恢复，并再次读取核验。不要把含凭据的终端输出、命令历史或备份文件提交到仓库。
 
 针对本项目抓包设备的现场写入回归测试会先读取并在进程内保留原始响应，确认本机编码与当前帧完全一致后，才重发当前配置。若读回值不同，会从原始响应构造恢复帧并再次读取核验。它会发送一条保存广播，执行前确认设备在线且 MAC 匹配：
 

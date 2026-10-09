@@ -21,10 +21,10 @@ cargo install --path .
 
 ```text
 corxnet-config [-i|--interface <网卡>] scan
-corxnet-config [-i|--interface <网卡>] read <MAC或后5字节> [--raw]
-corxnet-config [-i|--interface <网卡>] set <MAC或后5字节> <参数> <值>
-corxnet-config [-i|--interface <网卡>] mqtt-read <完整MAC> [--show-secrets]
-corxnet-config [-i|--interface <网卡>] mqtt-set <完整MAC> (--credentials-stdin | --username <用户名> --password <密码>) --subscribe-topic <主题> --publish-topic <主题> --device-id <ID>
+corxnet-config [-i|--interface <网卡>] read <完整MAC> [--raw]
+corxnet-config [-i|--interface <网卡>] set <完整MAC> <参数> <值>
+corxnet-config [-i|--interface <网卡>] mqtt-read <完整MAC>
+corxnet-config [-i|--interface <网卡>] mqtt-set <完整MAC> --username <用户名> --password <密码> --subscribe-topic <主题> --publish-topic <主题> --device-id <ID>
 corxnet-config completions <bash|zsh|fish>
 ```
 
@@ -48,26 +48,26 @@ MQTT 配置的协议推测、读写命令和字段限制见 [docs/MQTT.md](docs/
 corxnet-config -i br0 scan
 ```
 
-工具向 `255.255.255.255:60000` 广播五个 `00` 字节，并在 UDP `60001` 接收响应。扫描结果包含设备 IP 和响应中的 MAC 后五字节。
+工具向 `255.255.255.255:60000` 广播五个 `00` 字节，并在 UDP `60001` 接收响应。协议响应只携带 MAC 后五字节；工具按该设备格式补出首字节 `00`，扫描结果显示完整 MAC。所有命令参数都要求完整 MAC。
 
 ## 读取配置
 
 ```sh
-corxnet-config -i br0 read 90:E2:D7:20:60
+corxnet-config -i br0 read 00:90:E2:D7:20:60
 corxnet-config read 00:90:E2:D7:20:60 --interface br0 --raw
 ```
 
-`read` 使用 `0A + MAC后5字节 + 0A FF FF FF FF` 请求设备返回 256 字节配置。目标可填写完整 MAC，也可填写扫描结果中的后五字节。`--raw` 会在解析结果后打印原始响应的十六进制和 ASCII 数据。
+`read` 使用 `0A + MAC后5字节 + 0A FF FF FF FF` 请求设备返回 256 字节配置。目标必须填写扫描结果中的完整 MAC。`--raw` 会在解析结果后打印原始响应的十六进制和 ASCII 数据。
 
 ## 设置参数
 
 ```sh
-corxnet-config -i br0 set 90:E2:D7:20:60 ip 192.168.0.18
-corxnet-config set 90:E2:D7:20:60 mode 0
-corxnet-config set 90:E2:D7:20:60 port 50000
-corxnet-config set 90:E2:D7:20:60 dhcp 0
-corxnet-config set 90:E2:D7:20:60 id sensor-01
-corxnet-config set 90:E2:D7:20:60 hostname broker.example.net
+corxnet-config -i br0 set 00:90:E2:D7:20:60 ip 192.168.0.18
+corxnet-config set 00:90:E2:D7:20:60 mode 0
+corxnet-config set 00:90:E2:D7:20:60 port 50000
+corxnet-config set 00:90:E2:D7:20:60 dhcp 0
+corxnet-config set 00:90:E2:D7:20:60 id sensor-01
+corxnet-config set 00:90:E2:D7:20:60 hostname broker.example.net
 ```
 
 每条 `set` 只设置一个参数。字符串值含空格时用引号括起，例如 `id "sensor west"`。工具发送配置后尝试接收设备响应，再发送 `FF + MAC后5字节 + FF FF FF FF` 保存。更改 IP、DHCP 或 MAC 后设备地址可能改变；更改 MAC 后，后续命令应使用新 MAC。
