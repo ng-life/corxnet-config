@@ -58,19 +58,35 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: corxnet-config-*
           merge-multiple: true
           path: dist
-      - name: Create release and upload assets
+      - name: Create version release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --generate-notes
-
+          EVENT_REF: ${{ github.ref }}
+          EVENT_REF_NAME: ${{ github.ref_name }}
+          EVENT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          if [[ "$EVENT_REF" == refs/tags/v* ]]; then
+            TAG="$EVENT_REF_NAME"
+            TARGET_ARGS=()
+          else
+            VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+            TAG="v$VERSION"
+            TARGET_ARGS=(--target "$EVENT_SHA")
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it unchanged."
+          else
+            gh release create "$TAG" dist/* --generate-notes "${TARGET_ARGS[@]}"
+          fi

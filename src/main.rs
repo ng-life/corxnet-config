@@ -1,4 +1,5 @@
 use std::{
+    io::Read,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
     process,
     time::Duration,
@@ -54,6 +55,48 @@ enum Commands {
         #[arg(required = true, num_args = 1.., value_name = "值")]
         value: Vec<String>,
     },
+    #[command(about = "读取设备 MQTT 配置")]
+    MqttRead {
+        #[arg(value_name = "MAC", help = "设备完整 MAC 地址")]
+        mac: String,
+        #[arg(long, help = "显示用户名和密码；默认隐藏")]
+        show_secrets: bool,
+    },
+    #[command(about = "保存设备 MQTT 配置")]
+    MqttSet {
+        #[arg(value_name = "MAC", help = "设备完整 MAC 地址")]
+        mac: String,
+        #[arg(
+            long,
+            conflicts_with_all = ["username", "password"],
+            help = "从标准输入读取用户名和密码"
+        )]
+        credentials_stdin: bool,
+        #[arg(
+            long,
+            value_name = "用户名",
+            requires = "password",
+            conflicts_with = "credentials_stdin"
+        )]
+        username: Option<String>,
+        #[arg(
+            long,
+            value_name = "密码",
+            requires = "username",
+            conflicts_with = "credentials_stdin"
+        )]
+        password: Option<String>,
+        #[arg(
+            long,
+            value_name = "主题",
+            help = "订阅主题，例如设备接收控制命令的主题"
+        )]
+        subscribe_topic: String,
+        #[arg(long, value_name = "主题", help = "发布主题，例如设备上报事件的主题")]
+        publish_topic: String,
+        #[arg(long, value_name = "设备ID")]
+        device_id: String,
+    },
     #[command(about = "生成 shell 补全脚本")]
     Completions {
         #[arg(value_enum, value_name = "SHELL")]
@@ -107,6 +150,43 @@ fn run(cli: Cli) -> Result<(), String> {
             make_setting(setting, &value)?,
             cli.interface.as_deref(),
         ),
+        Commands::MqttRead { mac, show_secrets } => mqtt_read(
+            parse_full_device_mac(&mac)?,
+            cli.interface.as_deref(),
+            show_secrets,
+        ),
+        Commands::MqttSet {
+            mac,
+            credentials_stdin,
+            username,
+            password,
+            subscribe_topic,
+            publish_topic,
+            device_id,
+        } => {
+            let mac = parse_full_device_mac(&mac)?;
+            let (username, password) =
+                match (credentials_stdin, username, password) {
+                    (true, None, None) => read_credentials_stdin()?,
+                    (false, Some(username), Some(password)) => (username, password),
+                    _ => return Err(
+                        "凭据请同时指定 --username 和 --password，或单独使用 --credentials-stdin"
+                            .into(),
+                    ),
+                };
+            let config = MqttConfig {
+                username,
+                password,
+                subscribe_topic,
+                publish_topic,
+                device_id,
+            };
+            let packet = encode_mqtt_save(mac, &config)?;
+            let s = socket(cli.interface.as_deref())?;
+            broadcast(&s, &packet)?;
+            println!("MQTT 配置保存广播已发送；请运行 mqtt-read 读取并核对配置。");
+            Ok(())
+        }
         Commands::Completions { shell } => {
             let shell = match shell {
                 ShellKind::Bash => Shell::Bash,
@@ -122,6 +202,222 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn parse_full_device_mac(s: &str) -> Result<[u8; 6], String> {
+    if s.len() == 12 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let mut mac = [0; 6];
+        for (i, chunk) in s.as_bytes().chunks_exact(2).enumerate() {
+            mac[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16)
+                .map_err(|_| "MAC 地址格式无效")?;
+        }
+        Ok(mac)
+    } else {
+        parse_mac(s)
+    }
+}
+
+const MQTT_FIELD_SLOTS: [usize; 5] = [101, 101, 101, 101, 102];
+const MQTT_TRAILER_OFFSET: usize = 520;
+const MQTT_PACKET_LEN: usize = 623;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttConfig {
+    username: String,
+    password: String,
+    subscribe_topic: String,
+    publish_topic: String,
+    device_id: String,
+}
+
+impl MqttConfig {
+    fn values(&self) -> [&str; 5] {
+        [
+            &self.username,
+            &self.password,
+            &self.subscribe_topic,
+            &self.publish_topic,
+            &self.device_id,
+        ]
+    }
+}
+
+fn encode_mqtt_read(mac: [u8; 6]) -> Vec<u8> {
+    let mut packet = vec![0x33, 0xbb];
+    append_ascii_mac(&mut packet, mac);
+    packet.extend_from_slice(&[0xbb, 0x33]);
+    packet
+}
+
+fn encode_mqtt_save(mac: [u8; 6], config: &MqttConfig) -> Result<Vec<u8>, String> {
+    let mut packet = vec![0x44, 0xaa];
+    append_ascii_mac(&mut packet, mac);
+    for (value, slot) in config.values().into_iter().zip(MQTT_FIELD_SLOTS) {
+        let bytes = value.as_bytes();
+        if !bytes.is_ascii() {
+            return Err("MQTT 参数只支持 ASCII 字符".into());
+        }
+        if bytes.contains(&0) {
+            return Err("MQTT 参数不能包含 NUL 字符".into());
+        }
+        let max_len = slot - 1;
+        if bytes.len() > max_len {
+            return Err(format!(
+                "MQTT 字段最多允许 {max_len} 字节，当前 {} 字节",
+                bytes.len()
+            ));
+        }
+        packet.push(bytes.len() as u8);
+        packet.extend_from_slice(bytes);
+        packet.resize(packet.len() + max_len - bytes.len(), 0);
+    }
+    packet.push(0xff);
+    packet.resize(MQTT_TRAILER_OFFSET + 101, 0);
+    packet.extend_from_slice(&[0xaa, 0x44]);
+    if packet.len() != MQTT_PACKET_LEN {
+        return Err("MQTT 保存报文长度与协议样本不符".into());
+    }
+    Ok(packet)
+}
+
+fn append_ascii_mac(packet: &mut Vec<u8>, mac: [u8; 6]) {
+    for byte in mac {
+        packet.extend_from_slice(format!("{byte:02X}").as_bytes());
+    }
+}
+
+fn parse_mqtt_response(packet: &[u8], expected_mac: [u8; 6]) -> Result<MqttConfig, String> {
+    if packet.len() != MQTT_PACKET_LEN || packet[..2] != [0x33, 0xbb] {
+        return Err("MQTT 响应长度或帧头不正确".into());
+    }
+    let mut mac_text = Vec::with_capacity(12);
+    append_ascii_mac(&mut mac_text, expected_mac);
+    if packet[2..14] != mac_text {
+        return Err("MQTT 响应中的 MAC 与请求设备不匹配".into());
+    }
+    if packet[MQTT_TRAILER_OFFSET] != 0xff || packet[MQTT_PACKET_LEN - 2..] != [0xbb, 0x33] {
+        return Err("MQTT 响应保留区或帧尾不正确".into());
+    }
+    let mut offset = 14;
+    let mut values = Vec::with_capacity(5);
+    for (field_index, slot) in MQTT_FIELD_SLOTS.into_iter().enumerate() {
+        let len = packet[offset] as usize;
+        if len > slot - 1 {
+            return Err("MQTT 响应字段长度超出协议字段范围".into());
+        }
+        let content = &packet[offset + 1..offset + 1 + len];
+        let value = std::str::from_utf8(content)
+            .map_err(|_| "MQTT 响应字段不是有效 UTF-8")?
+            .to_string();
+        if !content.is_ascii() || content.contains(&0) {
+            return Err("MQTT 响应字段包含不支持的字符".into());
+        }
+        if let Some(padding_offset) = packet[offset + 1 + len..offset + slot]
+            .iter()
+            .position(|byte| *byte != 0)
+        {
+            return Err(format!(
+                "MQTT 第 {} 个字段的零填充格式不正确（字段偏移 {}）",
+                field_index + 1,
+                offset + 1 + len + padding_offset
+            ));
+        }
+        values.push(value);
+        offset += slot;
+    }
+    if packet[MQTT_TRAILER_OFFSET + 1..MQTT_PACKET_LEN - 2]
+        .iter()
+        .any(|byte| *byte != 0)
+    {
+        return Err("MQTT 响应保留区格式不正确".into());
+    }
+    let mut values = values.into_iter();
+    Ok(MqttConfig {
+        username: values.next().unwrap(),
+        password: values.next().unwrap(),
+        subscribe_topic: values.next().unwrap(),
+        publish_topic: values.next().unwrap(),
+        device_id: values.next().unwrap(),
+    })
+}
+
+fn read_credentials_stdin() -> Result<(String, String), String> {
+    let mut input = String::new();
+    std::io::stdin()
+        .take(205)
+        .read_to_string(&mut input)
+        .map_err(|e| format!("读取标准输入 MQTT 凭据失败：{e}"))?;
+    if input.len() > 204 {
+        return Err("标准输入凭据超过 100 字节用户名和 100 字节密码的最大长度".into());
+    }
+    let mut lines = input.lines();
+    let username = lines.next().ok_or("标准输入第一行须为 MQTT 用户名")?;
+    let password = lines.next().ok_or("标准输入第二行须为 MQTT 密码")?;
+    if lines.next().is_some() {
+        return Err("标准输入只能包含用户名和密码两行".into());
+    }
+    Ok((username.to_string(), password.to_string()))
+}
+
+fn mqtt_read(mac: [u8; 6], interface: Option<&str>, show_secrets: bool) -> Result<(), String> {
+    let socket = socket(interface)?;
+    let (config, from) = receive_mqtt_config(&socket, mac)?;
+    println!("MQTT 配置（设备 {from}）");
+    println!(
+        "  用户名：{}",
+        if show_secrets {
+            config.username.as_str()
+        } else {
+            "********（使用 --show-secrets 显示）"
+        }
+    );
+    println!(
+        "  密码：{}",
+        if show_secrets {
+            config.password.as_str()
+        } else {
+            "********（使用 --show-secrets 显示）"
+        }
+    );
+    println!("  订阅主题：{}", config.subscribe_topic);
+    println!("  发布主题：{}", config.publish_topic);
+    println!("  设备 ID：{}", config.device_id);
+    Ok(())
+}
+
+fn receive_mqtt_config(
+    socket: &UdpSocket,
+    mac: [u8; 6],
+) -> Result<(MqttConfig, SocketAddr), String> {
+    broadcast(&socket, &encode_mqtt_read(mac))?;
+    let mut buf = [0u8; 2048];
+    let mut last_invalid = None;
+    loop {
+        let (len, from) = match socket.recv_from(&mut buf) {
+            Ok(packet) => packet,
+            Err(e) => {
+                let detail = last_invalid
+                    .map(|reason| format!("；收到但无法解析的响应：{reason}"))
+                    .unwrap_or_default();
+                return Err(format!("读取 MQTT 参数超时或接收失败：{e}{detail}"));
+            }
+        };
+        match parse_mqtt_response(&buf[..len], mac) {
+            Ok(config) => return Ok((config, from)),
+            Err(reason) => last_invalid = Some(reason),
+        }
+    }
+}
+
+#[cfg(test)]
+fn mqtt_save_from_response(response: &[u8]) -> Result<Vec<u8>, String> {
+    if response.len() != MQTT_PACKET_LEN || response[..2] != [0x33, 0xbb] {
+        return Err("无法从该 MQTT 响应生成恢复报文".into());
+    }
+    let mut packet = response.to_vec();
+    packet[..2].copy_from_slice(&[0x44, 0xaa]);
+    packet[MQTT_PACKET_LEN - 2..].copy_from_slice(&[0xaa, 0x44]);
+    Ok(packet)
 }
 
 fn socket(interface: Option<&str>) -> Result<UdpSocket, String> {
@@ -430,4 +726,124 @@ fn hex(b: &[u8]) -> String {
         .map(|x| format!("{x:02X}"))
         .collect::<Vec<_>>()
         .join(":")
+}
+
+#[cfg(test)]
+mod mqtt_tests {
+    use super::*;
+
+    fn sample_config() -> MqttConfig {
+        MqttConfig {
+            username: "user-example".into(),
+            password: "not-a-real-password;hmacsha256".into(),
+            subscribe_topic: "SFQ257YC4K/WH-01/control".into(),
+            publish_topic: "SFQ257YC4K/WH-01/event".into(),
+            device_id: "SFQ257YC4KWH-01".into(),
+        }
+    }
+
+    #[test]
+    fn mqtt_save_layout_matches_capture_lengths_and_round_trips() {
+        let mac = [0x00, 0x90, 0xe2, 0xd7, 0x20, 0x60];
+        let save = encode_mqtt_save(mac, &sample_config()).unwrap();
+        assert_eq!(save.len(), MQTT_PACKET_LEN);
+        assert_eq!(&save[..2], &[0x44, 0xaa]);
+        assert_eq!(&save[2..14], b"0090E2D72060");
+        assert_eq!(save[14], 12);
+        assert_eq!(save[115], 30);
+        assert_eq!(save[216], 24);
+        assert_eq!(save[317], 22);
+        assert_eq!(save[418], 15);
+        assert_eq!(save[MQTT_TRAILER_OFFSET], 0xff);
+        assert_eq!(&save[MQTT_PACKET_LEN - 2..], &[0xaa, 0x44]);
+
+        let mut response = save;
+        response[..2].copy_from_slice(&[0x33, 0xbb]);
+        response[MQTT_PACKET_LEN - 2..].copy_from_slice(&[0xbb, 0x33]);
+        assert_eq!(
+            parse_mqtt_response(&response, mac).unwrap(),
+            sample_config()
+        );
+    }
+
+    #[test]
+    fn mqtt_fields_reject_values_larger_than_observed_slots() {
+        let mac = [0x00, 0x90, 0xe2, 0xd7, 0x20, 0x60];
+        let mut config = sample_config();
+        config.subscribe_topic = "x".repeat(MQTT_FIELD_SLOTS[2]);
+        assert!(encode_mqtt_save(mac, &config).is_err());
+    }
+
+    #[test]
+    fn mqtt_set_accepts_cli_credentials_or_stdin_exclusively() {
+        let common = [
+            "corxnet-config",
+            "mqtt-set",
+            "00:90:E2:D7:20:60",
+            "--subscribe-topic",
+            "control",
+            "--publish-topic",
+            "event",
+            "--device-id",
+            "device-01",
+        ];
+        let mut direct = common.to_vec();
+        direct.extend(["--username", "user", "--password", "pass"]);
+        assert!(Cli::try_parse_from(direct).is_ok());
+
+        let mut stdin = common.to_vec();
+        stdin.push("--credentials-stdin");
+        assert!(Cli::try_parse_from(stdin).is_ok());
+
+        let mut incomplete = common.to_vec();
+        incomplete.extend(["--username", "user"]);
+        assert!(Cli::try_parse_from(incomplete).is_err());
+
+        let mut mixed = common.to_vec();
+        mixed.extend([
+            "--credentials-stdin",
+            "--username",
+            "user",
+            "--password",
+            "pass",
+        ]);
+        assert!(Cli::try_parse_from(mixed).is_err());
+    }
+
+    #[test]
+    #[ignore = "向指定控制器重发当前 MQTT 配置；若读回不同会恢复原始帧"]
+    fn mqtt_live_save_keeps_or_restores_original_config() {
+        let mac = [0x00, 0x90, 0xe2, 0xd7, 0x20, 0x60];
+        let socket = socket(Some("br0")).unwrap();
+        let (original, _) = receive_mqtt_config(&socket, mac).unwrap();
+        let original_response = {
+            broadcast(&socket, &encode_mqtt_read(mac)).unwrap();
+            let mut buf = [0u8; 2048];
+            loop {
+                let (len, _) = socket.recv_from(&mut buf).unwrap();
+                if let Ok(config) = parse_mqtt_response(&buf[..len], mac) {
+                    assert_eq!(config, original, "设备读回配置前后发生变化；未发送写入帧");
+                    break buf[..len].to_vec();
+                }
+            }
+        };
+        let restore_packet = mqtt_save_from_response(&original_response).unwrap();
+        assert_eq!(
+            encode_mqtt_save(mac, &original).unwrap(),
+            restore_packet,
+            "本机编码与设备当前帧布局不一致；未发送写入帧"
+        );
+
+        broadcast(&socket, &restore_packet).unwrap();
+        std::thread::sleep(Duration::from_millis(250));
+        let after_write = receive_mqtt_config(&socket, mac);
+        if !matches!(after_write, Ok((ref value, _)) if value == &original) {
+            broadcast(&socket, &restore_packet).unwrap();
+            std::thread::sleep(Duration::from_millis(250));
+            let restored = receive_mqtt_config(&socket, mac)
+                .expect("已发送原始 MQTT 配置恢复帧，但无法读取设备确认恢复结果");
+            assert_eq!(restored.0, original, "设备 MQTT 配置恢复核验失败");
+            panic!("MQTT 写入测试导致配置变化；原始配置已恢复并核验");
+        }
+    }
 }

@@ -23,8 +23,12 @@ cargo install --path .
 corxnet-config [-i|--interface <网卡>] scan
 corxnet-config [-i|--interface <网卡>] read <MAC或后5字节> [--raw]
 corxnet-config [-i|--interface <网卡>] set <MAC或后5字节> <参数> <值>
+corxnet-config [-i|--interface <网卡>] mqtt-read <完整MAC> [--show-secrets]
+corxnet-config [-i|--interface <网卡>] mqtt-set <完整MAC> (--credentials-stdin | --username <用户名> --password <密码>) --subscribe-topic <主题> --publish-topic <主题> --device-id <ID>
 corxnet-config completions <bash|zsh|fish>
 ```
+
+MQTT 配置的协议推测、读写命令和字段限制见 [docs/MQTT.md](docs/MQTT.md)。`mqtt-set` 会整体保存五个 MQTT 字段；测试和修改前应先读取并保留现有配置，以便必要时恢复。
 
 `-i/--interface` 可放在命令前或后。Linux 可用 `ip link`、macOS 可用 `networksetup -listallhardwareports`、Windows PowerShell 可用 `Get-NetAdapter` 查看网卡名。未指定时使用系统路由选择的出口网卡。
 
@@ -146,4 +150,4 @@ corxnet-config completions fish > ~/.config/fish/completions/corxnet-config.fish
 
 程序使用 UDP 广播地址 `255.255.255.255`、设备端口 `60000` 和本机接收端口 `60001`。Linux 上 `-i/--interface` 将 socket 绑定到指定网卡；Windows 和 macOS 则绑定指定网卡上的 IPv4 地址。各系统防火墙需允许 UDP `60001` 入站。
 
-扫描请求为五个 `00` 字节。配置请求格式为 `命令字 + MAC后5字节 + 配置指令`。任何配置变更都需要保存命令才会生效。本工具仅提供本文列出的设备扫描、配置读取与网络参数设置命令。
+扫描请求为五个 `00` 字节。网络配置请求格式为 `命令字 + MAC后5字节 + 配置指令`；MQTT 帧格式见 [docs/MQTT.md](docs/MQTT.md)。网络参数变更需发送保存命令；MQTT 写入使用其独立的 `44 AA ... AA 44` 保存帧。
