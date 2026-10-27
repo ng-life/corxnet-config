@@ -2,14 +2,17 @@
 
 ## 项目目标
 
-本项目是面向科星 CX-8308W 等兼容控制器的 Rust 命令行网络配置工具。UDP 配置协议以 `docs/20.docx` 为准。用户手册没有定义的命令不得加入工具，也不得以试探未知命令的方式探索设备。
+本项目是面向科星 CX-8308W 等兼容控制器的 Go 命令行网络配置工具。UDP 配置协议以 `docs/20.docx` 为准。用户手册没有定义的命令不得加入工具，也不得以试探未知命令的方式探索设备。
 
 ## 项目结构
 
-- `src/main.rs`：CLI 定义、UDP 广播和响应处理、配置解析与设置报文编码。
-- `src/web.rs`：HTTP 接口、同源校验和进程内 MQTT 原值恢复。
-- `src/web.html`：编译时内嵌的离线网页，无外部资源依赖。
-- `Cargo.toml` / `Cargo.lock`：Rust 包和依赖版本；CLI 使用 `clap`，Shell 补全使用 `clap_complete`。
+- `main.go`：Cobra CLI 定义、命令执行和终端输出。
+- `protocol.go`：MAC 校验、网络参数与 MQTT 报文编解码。
+- `device.go`：UDP 扫描、读取、保存与 MQTT 核验/恢复。
+- `socket_linux.go` / `socket_unix.go` / `socket_windows.go` / `interface_other.go`：跨平台广播与网卡绑定。
+- `web.go`：HTTP 接口、同源校验和进程内 MQTT 原值恢复。
+- `web.html`：通过 `go:embed` 内嵌的离线网页，无外部资源依赖。
+- `go.mod` / `go.sum`：Go 版本和依赖；CLI 与 Shell 补全统一使用 Cobra。
 - `README.md`：中文构建、使用、协议与补全指南。功能或命令变化时同步更新。
 - `docs/20.docx`：原始设备协议资料。变更报文或参数映射前先核对本文档。
 - `docs/MQTT.md`：根据用户抓包推测的 MQTT 报文格式、读写步骤和恢复方法；改动 MQTT 实现时同步维护。
@@ -24,7 +27,7 @@
 - `set`：只设置文档列出的单项网络参数；每次配置后按协议发送保存命令。
 - `mqtt-read` / `mqtt-set`：按 `docs/MQTT.md` 中分析的帧格式读取或保存完整 MQTT 配置；写入前必须读取并留好恢复值。
 - `serve`：启动 HTTP 服务，用内嵌网页调用上述相同设备操作；UDP 操作串行执行，MQTT 写入前保留原值并复读核验。
-- `completions`：通过 `clap_complete` 生成 Bash、Zsh、Fish 补全，不发送网络报文。
+- `completions`：通过 Cobra 生成 Bash、Zsh、Fish 补全，不发送网络报文。
 
 不得保留任意命令字、内层指令或未知报文探测接口。设备是磁保持继电器控制器；不要加入继电器控制报文。测试 MQTT 写入时必须先保留原配置，若值发生变化则恢复并复读确认。
 
@@ -45,26 +48,26 @@
 - 修改设备报文时优先用纯函数完成编码，再由 UDP 层发送；不要将网络副作用藏在解析逻辑中。
 - 默认保持扫描和读取只读。除非任务明确要求，不要在开发过程中向真实控制器发送 `set` 报文。
 - 不提交或持久化用户凭据。按用户要求，`mqtt-read` 明文输出用户名和密码，`mqtt-set` 通过明文参数接收用户名和密码；不要将真实凭据写入代码、文档或示例。不要推断未定义原始数据字段的含义。
-- 修改 CLI 参数、可选值或子命令后，以 `clap` 定义为准，由 `clap_complete` 生成各 Shell 脚本；不要另行维护手写补全脚本。
-- Cargo 依赖变化时更新并保留 `Cargo.lock`。
+- 修改 CLI 参数、可选值或子命令后，以 Cobra 定义为准，由 Cobra 生成各 Shell 脚本；不要另行维护手写补全脚本。
+- Go 依赖变化时运行 `go mod tidy`，更新并保留 `go.mod` 和 `go.sum`。
 
 ## 常用命令
 
 ```sh
-cargo fmt
-cargo check
-cargo test
-cargo build --release
-cargo run -- --help
-cargo run -- completions bash
-cargo run -- completions zsh
-cargo run -- completions fish
+gofmt -w *.go
+go vet ./...
+go test -race ./...
+go build -trimpath -o dist/corxnet-config .
+go run . --help
+go run . completions bash
+go run . completions zsh
+go run . completions fish
 ```
 
 README 应继续说明网卡参数、CLI 使用完整 MAC（协议报文使用 MAC 后五字节）、协议端口、各设置项范围、保存行为和 Shell 补全安装方法。
 
 ## 发布
 
-- 发布前更新 `Cargo.toml` 和 `Cargo.lock` 中的版本号，运行格式检查、编译和测试，并确认工作区无意外改动。
+- 发布前更新 `main.go` 中的 `version`，运行格式检查、编译和测试，并确认工作区无意外改动。
 - 将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签；标签会触发 Linux x86_64、Windows x86_64 和 macOS arm64 构建并创建 GitHub Release。
 - 发布完成后核对 Actions 运行结果和 Release 中的三个平台压缩包。

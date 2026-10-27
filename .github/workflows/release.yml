@@ -4,10 +4,12 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -19,36 +21,68 @@ jobs:
         include:
           - name: linux-x86_64
             runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
+            goos: linux
+            goarch: amd64
             archive: tar.gz
           - name: windows-x86_64
             runner: windows-2022
-            target: x86_64-pc-windows-msvc
+            goos: windows
+            goarch: amd64
             archive: zip
           - name: macos-arm64
             runner: macos-14
-            target: aarch64-apple-darwin
+            goos: darwin
+            goarch: arm64
             archive: tar.gz
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v6
         with:
-          targets: ${{ matrix.target }}
+          go-version-file: go.mod
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(sed -n 's/^const version = "\([^"]*\)"/\1/p' main.go)
+          test "$RELEASE_TAG" = "v$VERSION"
+      - name: Check formatting
+        shell: bash
+        run: test -z "$(gofmt -l *.go)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        shell: bash
+        run: |
+          mkdir -p dist
+          EXT=""
+          if [[ "$GOOS" == "windows" ]]; then EXT=".exe"; fi
+          go build -trimpath -o "dist/corxnet-config$EXT" .
+      - name: Verify binary version
+        shell: bash
+        run: |
+          EXT=""
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then EXT=".exe"; fi
+          VERSION=$(sed -n 's/^const version = "\([^"]*\)"/\1/p' main.go)
+          "./dist/corxnet-config$EXT" --version | grep -F "$VERSION"
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/corxnet-config dist/
           tar -C dist -czf corxnet-config-${{ matrix.name }}.tar.gz corxnet-config
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/corxnet-config.exe dist/
           Compress-Archive -Path dist/corxnet-config.exe -DestinationPath corxnet-config-${{ matrix.name }}.zip
       - uses: actions/upload-artifact@v4
         with:
@@ -60,6 +94,8 @@ jobs:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -68,25 +104,23 @@ jobs:
           pattern: corxnet-config-*
           merge-multiple: true
           path: dist
+      - name: Verify release assets and generate checksums
+        shell: bash
+        run: |
+          test -s dist/corxnet-config-linux-x86_64.tar.gz
+          test -s dist/corxnet-config-windows-x86_64.zip
+          test -s dist/corxnet-config-macos-arm64.tar.gz
+          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
       - name: Create version release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          EVENT_REF: ${{ github.ref }}
           EVENT_REF_NAME: ${{ github.ref_name }}
-          EVENT_SHA: ${{ github.sha }}
         shell: bash
         run: |
-          if [[ "$EVENT_REF" == refs/tags/v* ]]; then
-            TAG="$EVENT_REF_NAME"
-            TARGET_ARGS=()
-          else
-            VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
-            TAG="v$VERSION"
-            TARGET_ARGS=(--target "$EVENT_SHA")
-          fi
+          TAG="$EVENT_REF_NAME"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; leaving it unchanged."
           else
-            gh release create "$TAG" dist/* --generate-notes "${TARGET_ARGS[@]}"
+            gh release create "$TAG" dist/* --generate-notes
           fi

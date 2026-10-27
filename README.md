@@ -1,21 +1,31 @@
 # corxnet-config
 
-用于科星控制器的 Rust UDP 网络配置命令行工具。设备扫描和读取不会更改参数；`set` 每次下发一项配置，并按协议发送保存命令。
+用于科星控制器的 Go UDP 网络配置命令行工具。设备扫描和读取不会更改参数；`set` 每次下发一项配置，并按协议发送保存命令。
 
 ## 构建和安装
 
-需要 Rust 工具链。在项目目录构建：
+需要 Go 1.25 或更高版本，可通过 mise 管理 Go 工具链。在项目目录构建：
 
 ```sh
-cargo build --release
-./target/release/corxnet-config --help
+go build -trimpath -o dist/corxnet-config .
+./dist/corxnet-config --help
 ```
 
-也可以安装到 Cargo 的可执行文件目录：
+Windows 构建时将输出文件名改为 `dist/corxnet-config.exe`。也可以将当前项目安装到 `GOBIN`（未设置时为 `GOPATH/bin`）：
 
 ```sh
-cargo install --path .
+go install .
 ```
+
+开发检查：
+
+```sh
+gofmt -w *.go
+go vet ./...
+go test -race ./...
+```
+
+测试使用纯编码函数、HTTP 测试服务和本地 loopback UDP 模拟设备，不向真实控制器发送报文。工具不使用配置文件，网卡和监听地址通过命令行指定。帮助、版本和补全生成不会访问设备；成功退出码为 `0`，参数或运行错误沿用旧版退出码 `2`。
 
 ## 命令
 
@@ -29,7 +39,7 @@ corxnet-config [-i|--interface <网卡>] serve [--listen <IP:端口>]
 corxnet-config completions <bash|zsh|fish>
 ```
 
-MQTT 配置的协议推测、读写命令和字段限制见 [docs/MQTT.md](docs/MQTT.md)。`mqtt-set` 会整体保存五个 MQTT 字段；测试和修改前应先读取并保留现有配置，以便必要时恢复。
+MQTT 配置的协议推测、读写命令和字段限制见 [docs/MQTT.md](docs/MQTT.md)。`mqtt-set` 会整体保存五个 MQTT 字段；写入前工具会读取并在内存保留原值，写入后自动复读比对；核验失败时尝试恢复并复读。修改前仍应自行保留备份，以便进程退出后恢复。
 
 `-i/--interface` 可放在命令前或后。Linux 可用 `ip link`、macOS 可用 `networksetup -listallhardwareports`、Windows PowerShell 可用 `Get-NetAdapter` 查看网卡名。未指定时使用系统路由选择的出口网卡。
 
@@ -53,11 +63,11 @@ corxnet-config -i en0 serve --listen 0.0.0.0:8080
 
 启动后使用浏览器访问 `http://127.0.0.1:8080`。监听全部地址时，其他电脑使用运行程序的电脑 IP 访问，例如 `http://192.168.0.10:8080`。网页通过服务所在电脑的网卡收发 UDP；`--interface` 在启动时确定。按 Ctrl+C 停止服务。
 
-HTML、CSS 和 JavaScript 通过 `include_str!` 内嵌到可执行文件，运行时无需外部网页文件、Node.js 或 CDN。页面采用 Ant Design Pro 风格布局，提供设备扫描、网络参数读取与单项保存、MQTT 参数读取与整体保存；也可手动输入完整 MAC。原始读取响应可在网页展开查看。DNS 地址的读取偏移未在协议中定义，页面只提供 DNS 设置，不推断读取值。
+HTML、CSS 和 JavaScript 通过 `go:embed` 内嵌到可执行文件，运行时无需外部网页文件、Node.js 或 CDN。页面采用 Ant Design Pro 风格布局，提供设备扫描、网络参数读取与单项保存、MQTT 参数读取与整体保存；也可手动输入完整 MAC。原始读取响应可在网页展开查看。DNS 地址的读取偏移未在协议中定义，页面只提供 DNS 设置，不推断读取值。
 
 设备操作按顺序执行，避免并发争用 UDP `60001`。网页写入前显示确认弹窗。网络参数保存结果表示报文已发送，应重新读取核对；更改 IP、DHCP 或 MAC 后请重新扫描，并使用新的 MAC。
 
-MQTT 编辑必须先读取。服务为每个 MAC 保留本次服务首次读取的五个原值（最多 128 台设备），仅存于内存；后续读取不覆盖此恢复基线。写入前再次读取，成功后才发送保存帧，并自动复读比对。发送后超时或不一致会提示核验失败，不会自动宣称保存成功；可点击“恢复首次读取的原值”并复读核验。重启服务会清除原值。网页明文展示 MQTT 用户名和密码，不写入浏览器存储或服务日志。
+MQTT 编辑必须先读取。服务为每个 MAC 保留本次服务首次读取的五个原值（最多 128 台设备），仅存于内存；后续读取不覆盖此恢复基线。写入前再次读取，成功后才发送保存帧，并自动复读比对。发送后超时或不一致时，会尝试恢复本次写入前读取的原值并复读，随后返回核验失败及恢复结果；可点击“恢复首次读取的原值”并复读核验。重启服务会清除原值。网页明文展示 MQTT 用户名和密码，不写入浏览器存储或服务日志。
 
 服务不提供登录认证，只应在可信网络使用。默认仅本机访问；扩大监听范围会允许可访问该端口的用户配置设备。HTTP 不加密，凭据会以明文传输。设备接口不启用跨域访问，校验 Origin 与请求标记，并只接受 IP 或 `localhost` 作为访问地址。
 
@@ -139,7 +149,7 @@ corxnet-config set 00:90:E2:D7:20:60 hostname broker.example.net
 
 ## Shell 补全
 
-补全脚本由 `clap_complete` 根据命令定义生成。以下命令假设已安装 `corxnet-config` 并且它位于 `PATH` 中；修改 CLI 后重新运行命令即可更新脚本。
+补全脚本由 Cobra 根据命令定义生成。以下命令假设已安装 `corxnet-config` 并且它位于 `PATH` 中；修改 CLI 后重新运行命令即可更新脚本。
 
 ### Bash
 
@@ -182,3 +192,9 @@ corxnet-config completions fish > ~/.config/fish/completions/corxnet-config.fish
 程序使用 UDP 广播地址 `255.255.255.255`、设备端口 `60000` 和本机接收端口 `60001`。Linux 上 `-i/--interface` 将 socket 绑定到指定网卡；Windows 和 macOS 则绑定指定网卡上的 IPv4 地址。各系统防火墙需允许 UDP `60001` 入站。
 
 扫描请求为五个 `00` 字节。网络配置请求格式为 `命令字 + MAC后5字节 + 配置指令`；MQTT 帧格式见 [docs/MQTT.md](docs/MQTT.md)。网络参数变更需发送保存命令；MQTT 写入使用其独立的 `44 AA ... AA 44` 保存帧。
+
+## 自动构建与发布
+
+GitHub Actions 在 `main` 推送、Pull Request 和手动触发时执行格式检查、`go vet`、竞态测试及三平台构建。构建后运行各平台二进制核对版本，并保存压缩包为 Actions 产物。
+
+发布时先更新 `main.go` 中的 `version`，将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签。标签版本必须与代码版本一致。三个平台全部构建成功后，工作流创建 GitHub Release，上传 Linux x86_64、Windows x86_64、macOS arm64 压缩包及 `SHA256SUMS`。已有同名 Release 不会覆盖。

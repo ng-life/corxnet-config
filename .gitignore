@@ -1,4 +1,6 @@
-/target/
+/dist/
+/corxnet-config
+/corxnet-config.exe
 .env
 .env.*
 !.env.example

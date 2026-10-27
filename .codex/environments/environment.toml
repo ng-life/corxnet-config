@@ -7,4 +7,4 @@ script = ""
 [[actions]]
 name = "Run"
 icon = "run"
-command = "cargo run -- serve"
+command = "go run . serve"
