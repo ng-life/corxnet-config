@@ -6,12 +6,15 @@
 
 ## 项目结构
 
-- `main.go`：Cobra CLI 定义、命令执行和终端输出。
-- `protocol.go`：MAC 校验、网络参数与 MQTT 报文编解码。
-- `device.go`：UDP 扫描、读取、保存与 MQTT 核验/恢复。
-- `socket_linux.go` / `socket_unix.go` / `socket_windows.go` / `interface_other.go`：跨平台广播与网卡绑定。
-- `web.go`：HTTP 接口、同源校验和进程内 MQTT 原值恢复。
-- `web.html`：通过 `go:embed` 内嵌的离线网页，无外部资源依赖。
+- `cmd/corxnet-config/main.go`：程序入口、信号和退出码处理。
+- `internal/configtool/cli.go`：Cobra CLI 定义、命令执行和终端输出。
+- `internal/configtool/version.go`：版本号，发布标签与此保持一致。
+- `internal/configtool/protocol.go`：MAC 校验、网络参数与 MQTT 报文编解码。
+- `internal/configtool/device.go`：UDP 扫描、读取、保存与 MQTT 核验/恢复。
+- `internal/configtool/socket_*.go` / `internal/configtool/interface_other.go`：跨平台广播与网卡绑定。
+- `internal/configtool/web.go`：HTTP 接口、同源校验和进程内 MQTT 原值恢复。
+- `internal/configtool/web.html`：通过 `go:embed` 内嵌的离线网页，无外部资源依赖。
+- 测试与实现放在同一目录；内部实现集中在 `internal/configtool`，仅向程序入口暴露 `Run`。
 - `go.mod` / `go.sum`：Go 版本和依赖；CLI 与 Shell 补全统一使用 Cobra。
 - `README.md`：中文构建、使用、协议与补全指南。功能或命令变化时同步更新。
 - `docs/20.docx`：原始设备协议资料。变更报文或参数映射前先核对本文档。
@@ -54,20 +57,20 @@
 ## 常用命令
 
 ```sh
-gofmt -w *.go
+gofmt -w cmd internal
 go vet ./...
 go test -race ./...
-go build -trimpath -o dist/corxnet-config .
-go run . --help
-go run . completions bash
-go run . completions zsh
-go run . completions fish
+go build -trimpath -o dist/corxnet-config ./cmd/corxnet-config
+go run ./cmd/corxnet-config --help
+go run ./cmd/corxnet-config completions bash
+go run ./cmd/corxnet-config completions zsh
+go run ./cmd/corxnet-config completions fish
 ```
 
 README 应继续说明网卡参数、CLI 使用完整 MAC（协议报文使用 MAC 后五字节）、协议端口、各设置项范围、保存行为和 Shell 补全安装方法。
 
 ## 发布
 
-- 发布前更新 `main.go` 中的 `version`，运行格式检查、编译和测试，并确认工作区无意外改动。
+- 发布前更新 `internal/configtool/version.go` 中的 `version`，运行格式检查、编译和测试，并确认工作区无意外改动。
 - 将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签；标签会触发 Linux x86_64、Windows x86_64 和 macOS arm64 构建并创建 GitHub Release。
 - 发布完成后核对 Actions 运行结果和 Release 中的三个平台压缩包。

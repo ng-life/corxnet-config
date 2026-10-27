@@ -2,25 +2,38 @@
 
 用于科星控制器的 Go UDP 网络配置命令行工具。设备扫描和读取不会更改参数；`set` 每次下发一项配置，并按协议发送保存命令。
 
+## 项目结构
+
+```text
+cmd/corxnet-config/      程序入口、信号和退出码处理
+internal/configtool/    CLI、协议、UDP、HTTP 和内嵌网页
+  *_test.go             与实现放在同一包中的隔离测试
+  version.go            发布版本号
+docs/                   设备协议和 MQTT 抓包分析
+.github/workflows/      三平台构建与发布
+```
+
+内部实现通过 `Run` 供入口调用，不作为公共 Go 库提供。源码启动、构建和安装均使用 `./cmd/corxnet-config`；发布压缩包内的可执行文件名和命令用法保持不变。
+
 ## 构建和安装
 
 需要 Go 1.25 或更高版本，可通过 mise 管理 Go 工具链。在项目目录构建：
 
 ```sh
-go build -trimpath -o dist/corxnet-config .
+go build -trimpath -o dist/corxnet-config ./cmd/corxnet-config
 ./dist/corxnet-config --help
 ```
 
 Windows 构建时将输出文件名改为 `dist/corxnet-config.exe`。也可以将当前项目安装到 `GOBIN`（未设置时为 `GOPATH/bin`）：
 
 ```sh
-go install .
+go install ./cmd/corxnet-config
 ```
 
 开发检查：
 
 ```sh
-gofmt -w *.go
+gofmt -w cmd internal
 go vet ./...
 go test -race ./...
 ```
@@ -197,4 +210,4 @@ corxnet-config completions fish > ~/.config/fish/completions/corxnet-config.fish
 
 GitHub Actions 在 `main` 推送、Pull Request 和手动触发时执行格式检查、`go vet`、竞态测试及三平台构建。构建后运行各平台二进制核对版本，并保存压缩包为 Actions 产物。
 
-发布时先更新 `main.go` 中的 `version`，将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签。标签版本必须与代码版本一致。三个平台全部构建成功后，工作流创建 GitHub Release，上传 Linux x86_64、Windows x86_64、macOS arm64 压缩包及 `SHA256SUMS`。已有同名 Release 不会覆盖。
+发布时先更新 `internal/configtool/version.go` 中的 `version`，将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签。标签版本必须与代码版本一致。三个平台全部构建成功后，工作流创建 GitHub Release，上传 Linux x86_64、Windows x86_64、macOS arm64 压缩包及 `SHA256SUMS`。已有同名 Release 不会覆盖。

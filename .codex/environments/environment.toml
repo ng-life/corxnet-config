@@ -7,4 +7,4 @@ script = ""
 [[actions]]
 name = "Run"
 icon = "run"
-command = "go run . serve"
+command = "go run ./cmd/corxnet-config serve"

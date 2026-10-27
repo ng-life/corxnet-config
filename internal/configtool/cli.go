@@ -1,25 +1,16 @@
-package main
+package configtool
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"net/netip"
-	"os"
-	"os/signal"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-const version = "0.6.1"
-
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	code := Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
-	stop()
-	os.Exit(code)
-}
+// Run 执行命令并返回退出码，由程序入口负责退出进程。
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root := newCommand(nil)
 	root.SetIn(stdin)

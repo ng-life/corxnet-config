@@ -1,4 +1,4 @@
-package main
+package configtool
 
 import (
 	"golang.org/x/sys/windows"

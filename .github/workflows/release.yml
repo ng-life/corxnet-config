@@ -45,12 +45,12 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          VERSION=$(sed -n 's/^const version = "\([^"]*\)"/\1/p' main.go)
+          VERSION=$(sed -n 's/^const version = "\([^"]*\)"/\1/p' internal/configtool/version.go)
           test "$RELEASE_TAG" = "v$VERSION"
       - name: Check formatting
         shell: bash
         run: |
-          UNFORMATTED=$(gofmt -l *.go)
+          UNFORMATTED=$(gofmt -l cmd internal)
           if [[ -n "$UNFORMATTED" ]]; then
             echo "$UNFORMATTED"
             exit 1
@@ -69,13 +69,13 @@ jobs:
           mkdir -p dist
           EXT=""
           if [[ "$GOOS" == "windows" ]]; then EXT=".exe"; fi
-          go build -trimpath -o "dist/corxnet-config$EXT" .
+          go build -trimpath -o "dist/corxnet-config$EXT" ./cmd/corxnet-config
       - name: Verify binary version
         shell: bash
         run: |
           EXT=""
           if [[ "${{ matrix.goos }}" == "windows" ]]; then EXT=".exe"; fi
-          VERSION=$(sed -n 's/^const version = "\([^"]*\)"/\1/p' main.go)
+          VERSION=$(sed -n 's/^const version = "\([^"]*\)"/\1/p' internal/configtool/version.go)
           "./dist/corxnet-config$EXT" --version | grep -F "$VERSION"
       - name: Package (Unix)
         if: runner.os != 'Windows'
