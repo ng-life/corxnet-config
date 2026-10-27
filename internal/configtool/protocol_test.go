@@ -14,9 +14,9 @@ func sampleMQTT() MQTTConfig {
 	return MQTTConfig{Username: "user-example", Password: "not-a-real-password;hmacsha256", SubscribeTopic: "SFQ257YC4K/WH-01/control", PublishTopic: "SFQ257YC4K/WH-01/event", DeviceID: "SFQ257YC4KWH-01", HeartbeatTopic: "ping", HeartbeatContent: "alive", HeartbeatInterval: 30}
 }
 func mqttResponse(c MQTTConfig) []byte {
-	// 独立按文档构造响应，不调用被测编码器。
+	// 帧头尾按抓包，内容区按文档独立构造，不调用被测编码器。
 	p := make([]byte, 623)
-	p[0], p[1], p[621], p[622] = 0x44, 0xaa, 0xaa, 0x44
+	p[0], p[1], p[621], p[622] = 0x33, 0xbb, 0xbb, 0x33
 	copy(p[2:14], "0090E2D72060")
 	for i, v := range []string{c.Username, c.Password, c.SubscribeTopic, c.PublishTopic, c.DeviceID} {
 		offset := 14 + i*101
@@ -25,6 +25,13 @@ func mqttResponse(c MQTTConfig) []byte {
 	}
 	p[519], p[520] = byte(len(c.HeartbeatTopic)), byte(c.HeartbeatInterval)
 	copy(p[521:621], c.HeartbeatTopic+c.HeartbeatContent)
+	return p
+}
+
+// 保存请求与读取响应仅共用内容区，帧头尾不同。
+func mqttSaveFixture(c MQTTConfig) []byte {
+	p := mqttResponse(c)
+	p[0], p[1], p[621], p[622] = 0x44, 0xaa, 0xaa, 0x44
 	return p
 }
 func TestDocumentedPackets(t *testing.T) {
@@ -81,10 +88,10 @@ func TestMQTTLayoutAndValidation(t *testing.T) {
 	if string(p[2:14]) != "0090E2D72060" || p[14] != 12 || p[115] != 30 || p[216] != 24 || p[317] != 22 || p[418] != 15 || p[519] != 4 || p[520] != 30 || string(p[521:530]) != "pingalive" || p[621] != 170 || p[622] != 68 {
 		t.Fatal("capture offsets")
 	}
-	if !bytes.Equal(mqttReadPacket(), []byte{51, 187, 187, 51}) {
+	if !bytes.Equal(mqttReadPacket(testMAC), []byte("\x33\xbb0090E2D72060\xbb\x33")) {
 		t.Fatal("read")
 	}
-	if !bytes.Equal(p, mqttResponse(c)) {
+	if !bytes.Equal(p, mqttSaveFixture(c)) {
 		t.Fatal("encoded frame differs from document fixture")
 	}
 	got, e := parseMQTT(mqttResponse(c), testMAC)
@@ -144,7 +151,7 @@ func TestMQTTDocumentBoundaries(t *testing.T) {
 		if err != nil || got != c {
 			t.Fatalf("round trip: %v", err)
 		}
-		if !bytes.Equal(p, mqttResponse(c)) {
+		if !bytes.Equal(p, mqttSaveFixture(c)) {
 			t.Fatal("document fixture mismatch")
 		}
 	}
@@ -165,11 +172,11 @@ func TestMQTTDocumentBoundaries(t *testing.T) {
 			t.Fatalf("invalid heartbeat at %d accepted", offset)
 		}
 	}
-	// 旧版带读取帧头的响应不再作为文档协议接受。
+	// 保存帧不能被误当成读取响应接受。
 	p := mqttResponse(sampleMQTT())
-	p[0], p[1], p[621], p[622] = 0x33, 0xbb, 0xbb, 0x33
+	p[0], p[1], p[621], p[622] = 0x44, 0xaa, 0xaa, 0x44
 	if _, err := parseMQTT(p, testMAC); err == nil {
-		t.Fatal("legacy response accepted")
+		t.Fatal("save frame accepted as read response")
 	}
 }
 

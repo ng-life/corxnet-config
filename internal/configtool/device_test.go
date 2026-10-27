@@ -95,7 +95,7 @@ func TestMQTTWriteReadbackAndRecovery(t *testing.T) {
 			c := simulatedClient(t, func(p []byte) [][]byte {
 				mu.Lock()
 				defer mu.Unlock()
-				if bytes.Equal(p, []byte{0x33, 0xbb, 0xbb, 0x33}) {
+				if bytes.Equal(p, []byte("\x33\xbb0090E2D72060\xbb\x33")) {
 					if mode == "invalid-pre-read" || (mode == "timeout-after-write" && writes == 1) {
 						return [][]byte{{0}}
 					}
@@ -107,7 +107,7 @@ func TestMQTTWriteReadbackAndRecovery(t *testing.T) {
 					if writes > 1 {
 						expected = original
 					}
-					if !bytes.Equal(p, mqttResponse(expected)) {
+					if !bytes.Equal(p, mqttSaveFixture(expected)) {
 						t.Error("write/recovery frame does not preserve all document fields")
 					}
 					if mode == "success" || mode == "ack-lost" {
@@ -174,7 +174,7 @@ func TestCancelReceive(t *testing.T) {
 func TestMQTTReadFiltersOtherDevices(t *testing.T) {
 	wanted := sampleMQTT()
 	c := simulatedClient(t, func(p []byte) [][]byte {
-		if !bytes.Equal(p, []byte{0x33, 0xbb, 0xbb, 0x33}) {
+		if !bytes.Equal(p, []byte("\x33\xbb0090E2D72060\xbb\x33")) {
 			t.Error("unexpected MQTT read request")
 		}
 		other := mqttResponse(wanted)
@@ -205,7 +205,7 @@ func TestMQTTSaveAcknowledgement(t *testing.T) {
 			if mode == "foreign-address" {
 				address = "127.0.0.1:1"
 			}
-			err = saveMQTT(s, mqttResponse(sampleMQTT()), address)
+			err = saveMQTT(s, mqttSaveFixture(sampleMQTT()), address)
 			if (err == nil) != (mode == "valid") {
 				t.Fatalf("ack %s: %v", mode, err)
 			}

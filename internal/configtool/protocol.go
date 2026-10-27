@@ -166,7 +166,12 @@ func (c MQTTConfig) values() []string {
 	return []string{c.Username, c.Password, c.SubscribeTopic, c.PublishTopic, c.DeviceID}
 }
 
-func mqttReadPacket() []byte { return []byte{0x33, 0xbb, 0xbb, 0x33} }
+// 读取帧沿用用户确认的抓包格式，携带完整 MAC 的 ASCII 十六进制文本。
+func mqttReadPacket(m MAC) []byte {
+	p := []byte{0x33, 0xbb}
+	p = append(p, fmt.Sprintf("%X", m[:])...)
+	return append(p, 0xbb, 0x33)
+}
 
 func validateMQTTText(name, value string) error {
 	if len(value) > 100 {
@@ -210,7 +215,7 @@ func encodeMQTT(m MAC, c MQTTConfig) ([]byte, error) {
 
 func parseMQTT(p []byte, m MAC) (MQTTConfig, error) {
 	fail := func(s string) (MQTTConfig, error) { return MQTTConfig{}, fmt.Errorf("MQTT 响应%s", s) }
-	if len(p) != mqttFrameSize || !bytes.Equal(p[:2], []byte{0x44, 0xaa}) || !bytes.Equal(p[621:], []byte{0xaa, 0x44}) {
+	if len(p) != mqttFrameSize || !bytes.Equal(p[:2], []byte{0x33, 0xbb}) || !bytes.Equal(p[621:], []byte{0xbb, 0x33}) {
 		return fail("长度或帧格式不正确")
 	}
 	if string(p[2:14]) != fmt.Sprintf("%X", m[:]) {

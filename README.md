@@ -204,7 +204,7 @@ corxnet-config completions fish > ~/.config/fish/completions/corxnet-config.fish
 
 程序使用 UDP 广播地址 `255.255.255.255`、设备端口 `60000` 和本机接收端口 `60001`。Linux 上 `-i/--interface` 将 socket 绑定到指定网卡；Windows 和 macOS 则绑定指定网卡上的 IPv4 地址。各系统防火墙需允许 UDP `60001` 入站。
 
-扫描请求为五个 `00` 字节。网络配置请求格式为 `命令字 + MAC后5字节 + 配置指令`；MQTT 帧格式以 [docs/MQTT设置指令.doc](docs/MQTT设置指令.doc) 为准，字段与命令说明见 [docs/MQTT.md](docs/MQTT.md)。读取固定发送 `33 BB BB 33`；读取响应与保存请求均为 `44 AA ... AA 44` 格式。网络参数变更需发送保存命令；MQTT 写入使用其独立的 `44 AA ... AA 44` 保存帧。
+扫描请求为五个 `00` 字节。网络配置请求格式为 `命令字 + MAC后5字节 + 配置指令`；MQTT 请求、应答及内容区格式以用户验证后的 [docs/MQTT.md](docs/MQTT.md) 为准。读取请求为 `33 BB + 12 字节 ASCII MAC + BB 33`，读取响应为 `33 BB ... BB 33`，保存请求为 `44 AA ... AA 44`，保存应答为 `44 AA AA 44`。网络参数变更需发送保存命令；MQTT 写入使用其独立的 `44 AA ... AA 44` 保存帧。
 
 ## 自动构建与发布
 

@@ -154,7 +154,7 @@ func (c udpClient) Apply(ctx context.Context, m MAC, p []byte) (string, error) {
 	return "配置响应超时；保存命令已发送，请重新读取核对。", nil
 }
 func receiveMQTT(s *udpSocket, m MAC) (MQTTConfig, string, error) {
-	if e := send(s, mqttReadPacket()); e != nil {
+	if e := send(s, mqttReadPacket(m)); e != nil {
 		return MQTTConfig{}, "", e
 	}
 	_ = s.SetReadDeadline(time.Now().Add(timeout))
