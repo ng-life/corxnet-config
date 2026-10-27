@@ -9,11 +9,18 @@ cmd/corxnet-config/      程序入口、信号和退出码处理
 internal/configtool/    CLI、协议、UDP、HTTP 和内嵌网页
   *_test.go             与实现放在同一包中的隔离测试
   version.go            发布版本号
+android/                Android 应用、扫码与配置保存
 docs/                   设备协议和 MQTT 协议说明
 .github/workflows/      三平台构建与发布
 ```
 
 内部实现通过 `Run` 供入口调用，不作为公共 Go 库提供。源码启动、构建和安装均使用 `./cmd/corxnet-config`；发布压缩包内的可执行文件名和命令用法保持不变。
+
+## Android 版本
+
+[android/](android/README.md) 提供原生 Android 应用：在设备选择页扫描 JSON 二维码或扫描局域网设备，进入独立配置页后通过网络 / MQTT 两个 Tab 读取、编辑和分别保存；也可再扫一张含 `network`、`mqtt` 的配置码，预览后一键保存。二维码识别在本机完成，不依赖 Google Play 服务。
+
+构建、APK 安装、配置码格式和保存顺序见 [Android 使用说明](android/README.md)。
 
 ## 构建和安装
 
@@ -210,4 +217,4 @@ corxnet-config completions fish > ~/.config/fish/completions/corxnet-config.fish
 
 GitHub Actions 在 `main` 推送、Pull Request 和手动触发时执行格式检查、`go vet`、竞态测试及三平台构建。构建后运行各平台二进制核对版本，并保存压缩包为 Actions 产物。
 
-发布时先更新 `internal/configtool/version.go` 中的 `version`，将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签。标签版本必须与代码版本一致。三个平台全部构建成功后，工作流创建 GitHub Release，上传 Linux x86_64、Windows x86_64、macOS arm64 压缩包及 `SHA256SUMS`。已有同名 Release 不会覆盖。
+发布时先更新 `internal/configtool/version.go` 中的 `version`，将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签。标签版本必须与代码版本一致。三个桌面平台全部构建成功后，工作流创建 GitHub Release 草稿并上传压缩包及校验文件。Android 工作流另外执行 APK 构建、单元测试和 Lint；维护者使用本机已有签名构建 `corxnet-config-android-debug.apk`，校验与此前分发包的证书一致后上传草稿。重新生成包含全部四个安装包的 `SHA256SUMS`，核对后发布草稿。Android APK 为调试版，签名和发布步骤见 [Android 说明](android/README.md#github-release)。已有同名 Release 不会覆盖。

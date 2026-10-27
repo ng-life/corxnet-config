@@ -1,0 +1,37 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', 'internal/configtool/**', 'docs/MQTT.md', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', 'internal/configtool/**', 'docs/MQTT.md', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Verify shared Go protocol fixtures
+        run: go test -race ./...
+      - name: Install Android platform and build tools
+        run: '$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"'
+      - name: Test, lint, and build debug APK
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corxnet-config-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

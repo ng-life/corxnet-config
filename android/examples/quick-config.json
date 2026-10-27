@@ -1,0 +1,15 @@
+{
+  "network": {
+    "mode": 7,
+    "port": 1883,
+    "target": "192.168.0.100"
+  },
+  "mqtt": {
+    "subscribe_topic": "example/device/control",
+    "publish_topic": "example/device/event",
+    "device_id": "example-device",
+    "heartbeat_topic": "example/device/heartbeat",
+    "heartbeat_content": "alive",
+    "heartbeat_interval": 30
+  }
+}

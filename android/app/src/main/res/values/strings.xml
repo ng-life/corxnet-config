@@ -1,0 +1,3 @@
+<resources>
+    <string name="camera_permission_denied">相机权限未授予。可返回主页面，使用“粘贴二维码 JSON”。</string>
+</resources>

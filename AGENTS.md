@@ -21,6 +21,17 @@
 - `docs/MQTT.md`：经用户验证的抓包帧格式、内容区字段、工具支持范围及读写恢复说明；修改 MQTT 报文前核对本文档，并同步维护。
 - `.github/workflows/release.yml`：GitHub Actions 三平台构建与 Release 工作流。
 
+## Android 应用
+
+- `android/` 是独立 Gradle Android 工程，Java 17；Gradle 和依赖版本以工程配置为准，不使用 Maven 构建 Android。
+- `MainActivity` 仅负责二维码/局域网设备选择；获取 MAC 后进入 `DeviceConfigActivity`，网络和 MQTT 使用独立 Tab，保存按钮固定在底部；相机扫码由 `ScannerActivity` 负责。不要将设备选择和全部配置恢复成一个长滚动页面。
+- Android 使用说明及配置码契约见 `android/README.md`。修改扫码、参数或保存行为时同步维护。
+- `android/app/src/main/java/com/corxnet/config/core/` 是纯 Java 协议、配置码解析和设备会话；参数映射与 Go CLI 保持一致。
+- 设备码仅接受 `{"mac":"完整MAC"}`；配置码仅接受 `network` / `mqtt` 对象。配置码支持部分字段，写前读取并合并 MQTT，不因省略参数清空原值。
+- 一键保存先 MQTT 后网络，DHCP/IP/MAC 最后保存；部分失败须列出已完成项。复读核验和恢复包含全部 MQTT 字段，禁止假定两种保存是原子事务。
+- 共享报文样本位于 `android/app/src/test/resources/go-protocol-fixtures.json`，修改协议时同时运行 Go 和 Android 测试。样本只使用合成配置，不放入真实凭据。
+- APK 构建与测试：在 `android/` 中执行 `mise exec -- ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`；有模拟器时补充 `:app:connectedDebugAndroidTest`。
+
 ## 命令与协议边界
 
 只实现 `docs/20.docx` 明确列出的操作，以及 `docs/MQTT.md` 记录的 MQTT 读写操作：
@@ -75,4 +86,5 @@ README 应继续说明网卡参数、CLI 使用完整 MAC（协议报文使用 M
 
 - 发布前更新 `internal/configtool/version.go` 中的 `version`，运行格式检查、编译和测试，并确认工作区无意外改动。
 - 将版本提交推送到 `main`，再推送对应的 `vX.Y.Z` 标签；标签会触发 Linux x86_64、Windows x86_64 和 macOS arm64 构建并创建 GitHub Release。
-- 发布完成后核对 Actions 运行结果和 Release 中的三个平台压缩包。
+- 标签工作流先创建 Release 草稿；补齐本机既有签名的 Android 调试 APK，重新生成包含三个桌面压缩包和 APK 的 `SHA256SUMS` 后发布草稿。Android 分发包须与此前测试包签名一致；不上传签名密钥。
+- 发布完成后核对桌面与 Android Actions、三个桌面压缩包、Android APK 和校验文件。
