@@ -1,0 +1,2 @@
+# 保持 Windows 检出后的 Go 源码为 LF，避免 gofmt 将 CRLF 判为未格式化。
+* text=auto eol=lf

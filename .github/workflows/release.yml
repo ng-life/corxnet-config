@@ -49,7 +49,12 @@ jobs:
           test "$RELEASE_TAG" = "v$VERSION"
       - name: Check formatting
         shell: bash
-        run: test -z "$(gofmt -l *.go)"
+        run: |
+          UNFORMATTED=$(gofmt -l *.go)
+          if [[ -n "$UNFORMATTED" ]]; then
+            echo "$UNFORMATTED"
+            exit 1
+          fi
       - name: Vet
         run: go vet ./...
       - name: Test
