@@ -69,6 +69,8 @@ func TestHTTPMQTTBaselineAndRestore(t *testing.T) {
 	}
 	original := f.mqtt
 	f.mqtt.DeviceID = "external-change"
+	f.mqtt.HeartbeatContent = "external-heartbeat"
+	f.mqtt.HeartbeatInterval = 255
 	_, _ = s.dispatch(ctx, "/api/mqtt/read", body)
 	if s.originals[testMAC] != original {
 		t.Fatal("baseline overwritten")
@@ -76,6 +78,22 @@ func TestHTTPMQTTBaselineAndRestore(t *testing.T) {
 	if _, e := s.dispatch(ctx, "/api/mqtt/set", []byte(`{"mac":"0090E2D72060","config":{"username":""}}`)); e == nil {
 		t.Fatal("partial config accepted")
 	}
+	wanted := original
+	wanted.HeartbeatTopic = "new/topic"
+	wanted.HeartbeatContent = "new-body"
+	wanted.HeartbeatInterval = 60
+	payload, _ := json.Marshal(map[string]any{"mac": "0090E2D72060", "config": wanted})
+	if _, err := s.dispatch(ctx, "/api/mqtt/set", payload); err != nil || f.mqtt != wanted {
+		t.Fatal("complete MQTT save", err)
+	}
+	invalid := wanted
+	invalid.HeartbeatInterval = 256
+	payload, _ = json.Marshal(map[string]any{"mac": "0090E2D72060", "config": invalid})
+	calls := f.calls
+	if _, err := s.dispatch(ctx, "/api/mqtt/set", payload); err == nil || f.calls != calls {
+		t.Fatal("invalid interval reached device")
+	}
+
 	if _, e := s.dispatch(ctx, "/api/mqtt/restore", body); e != nil || f.mqtt != original {
 		t.Fatal("restore", e)
 	}

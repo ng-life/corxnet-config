@@ -9,7 +9,7 @@ cmd/corxnet-config/      程序入口、信号和退出码处理
 internal/configtool/    CLI、协议、UDP、HTTP 和内嵌网页
   *_test.go             与实现放在同一包中的隔离测试
   version.go            发布版本号
-docs/                   设备协议和 MQTT 抓包分析
+docs/                   设备协议和 MQTT 协议说明
 .github/workflows/      三平台构建与发布
 ```
 
@@ -47,12 +47,12 @@ corxnet-config [-i|--interface <网卡>] scan
 corxnet-config [-i|--interface <网卡>] read <完整MAC> [--raw]
 corxnet-config [-i|--interface <网卡>] set <完整MAC> <参数> <值>
 corxnet-config [-i|--interface <网卡>] mqtt-read <完整MAC>
-corxnet-config [-i|--interface <网卡>] mqtt-set <完整MAC> --username <用户名> --password <密码> --subscribe-topic <主题> --publish-topic <主题> --device-id <ID>
+corxnet-config [-i|--interface <网卡>] mqtt-set <完整MAC> --username <用户名> --password <密码> --subscribe-topic <主题> --publish-topic <主题> --device-id <ID> --heartbeat-topic <主题> --heartbeat-content <内容> --heartbeat-interval <秒>
 corxnet-config [-i|--interface <网卡>] serve [--listen <IP:端口>]
 corxnet-config completions <bash|zsh|fish>
 ```
 
-MQTT 配置的协议推测、读写命令和字段限制见 [docs/MQTT.md](docs/MQTT.md)。`mqtt-set` 会整体保存五个 MQTT 字段；写入前工具会读取并在内存保留原值，写入后自动复读比对；核验失败时尝试恢复并复读。修改前仍应自行保留备份，以便进程退出后恢复。
+MQTT 配置的文档协议、读写命令和字段限制见 [docs/MQTT.md](docs/MQTT.md)。`mqtt-set` 会整体保存八个 MQTT 配置项（包含心跳主题、内容及间隔）；写入前工具会读取并在内存保留原值，写入后自动复读比对；核验失败时尝试恢复并复读。修改前仍应自行保留备份，以便进程退出后恢复。
 
 `-i/--interface` 可放在命令前或后。Linux 可用 `ip link`、macOS 可用 `networksetup -listallhardwareports`、Windows PowerShell 可用 `Get-NetAdapter` 查看网卡名。未指定时使用系统路由选择的出口网卡。
 
@@ -80,7 +80,7 @@ HTML、CSS 和 JavaScript 通过 `go:embed` 内嵌到可执行文件，运行时
 
 设备操作按顺序执行，避免并发争用 UDP `60001`。网页写入前显示确认弹窗。网络参数保存结果表示报文已发送，应重新读取核对；更改 IP、DHCP 或 MAC 后请重新扫描，并使用新的 MAC。
 
-MQTT 编辑必须先读取。服务为每个 MAC 保留本次服务首次读取的五个原值（最多 128 台设备），仅存于内存；后续读取不覆盖此恢复基线。写入前再次读取，成功后才发送保存帧，并自动复读比对。发送后超时或不一致时，会尝试恢复本次写入前读取的原值并复读，随后返回核验失败及恢复结果；可点击“恢复首次读取的原值”并复读核验。重启服务会清除原值。网页明文展示 MQTT 用户名和密码，不写入浏览器存储或服务日志。
+MQTT 编辑必须先读取。服务为每个 MAC 保留本次服务首次读取的完整原值（最多 128 台设备），仅存于内存；后续读取不覆盖此恢复基线。写入前再次读取，成功后才发送保存帧，并自动复读比对。发送后超时或不一致时，会尝试恢复本次写入前读取的原值并复读，随后返回核验失败及恢复结果；可点击“恢复首次读取的原值”并复读核验。重启服务会清除原值。网页明文展示 MQTT 用户名和密码，不写入浏览器存储或服务日志。
 
 服务不提供登录认证，只应在可信网络使用。默认仅本机访问；扩大监听范围会允许可访问该端口的用户配置设备。HTTP 不加密，凭据会以明文传输。设备接口不启用跨域访问，校验 Origin 与请求标记，并只接受 IP 或 `localhost` 作为访问地址。
 
@@ -93,7 +93,7 @@ HTTP 接口返回 JSON。设备操作使用 POST，请求需携带 `X-Corxnet-Re
 | `POST /api/read` | `mac` |
 | `POST /api/set` | `mac`、`setting`、`value`，参数名和取值与 CLI 一致 |
 | `POST /api/mqtt/read` | `mac`，并保留首次原值 |
-| `POST /api/mqtt/set` | `mac`、`config`，后者包含 `username`、`password`、`subscribe_topic`、`publish_topic`、`device_id` |
+| `POST /api/mqtt/set` | `mac`、`config`，后者包含 `username`、`password`、`subscribe_topic`、`publish_topic`、`device_id`、`heartbeat_topic`、`heartbeat_content`、`heartbeat_interval`（整数，0–255 秒） |
 | `POST /api/mqtt/restore` | `mac`，恢复首次原值并核验 |
 
 ## 扫描设备
@@ -204,7 +204,7 @@ corxnet-config completions fish > ~/.config/fish/completions/corxnet-config.fish
 
 程序使用 UDP 广播地址 `255.255.255.255`、设备端口 `60000` 和本机接收端口 `60001`。Linux 上 `-i/--interface` 将 socket 绑定到指定网卡；Windows 和 macOS 则绑定指定网卡上的 IPv4 地址。各系统防火墙需允许 UDP `60001` 入站。
 
-扫描请求为五个 `00` 字节。网络配置请求格式为 `命令字 + MAC后5字节 + 配置指令`；MQTT 帧格式见 [docs/MQTT.md](docs/MQTT.md)。网络参数变更需发送保存命令；MQTT 写入使用其独立的 `44 AA ... AA 44` 保存帧。
+扫描请求为五个 `00` 字节。网络配置请求格式为 `命令字 + MAC后5字节 + 配置指令`；MQTT 帧格式以 [docs/MQTT设置指令.doc](docs/MQTT设置指令.doc) 为准，字段与命令说明见 [docs/MQTT.md](docs/MQTT.md)。读取固定发送 `33 BB BB 33`；读取响应与保存请求均为 `44 AA ... AA 44` 格式。网络参数变更需发送保存命令；MQTT 写入使用其独立的 `44 AA ... AA 44` 保存帧。
 
 ## 自动构建与发布
 

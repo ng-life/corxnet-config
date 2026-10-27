@@ -150,81 +150,104 @@ func parseNetworkConfig(b []byte) NetworkConfig {
 }
 
 type MQTTConfig struct {
-	Username       string `json:"username"`
-	Password       string `json:"password"`
-	SubscribeTopic string `json:"subscribe_topic"`
-	PublishTopic   string `json:"publish_topic"`
-	DeviceID       string `json:"device_id"`
+	Username          string `json:"username"`
+	Password          string `json:"password"`
+	SubscribeTopic    string `json:"subscribe_topic"`
+	PublishTopic      string `json:"publish_topic"`
+	DeviceID          string `json:"device_id"`
+	HeartbeatTopic    string `json:"heartbeat_topic"`
+	HeartbeatContent  string `json:"heartbeat_content"`
+	HeartbeatInterval int    `json:"heartbeat_interval"`
 }
 
-var mqttSlots = []int{101, 101, 101, 101, 102}
+const mqttFrameSize = 623
 
 func (c MQTTConfig) values() []string {
 	return []string{c.Username, c.Password, c.SubscribeTopic, c.PublishTopic, c.DeviceID}
 }
-func mqttReadPacket(m MAC) []byte {
-	p := []byte{0x33, 0xbb}
-	p = append(p, fmt.Sprintf("%X", m[:])...)
-	return append(p, 0xbb, 0x33)
+
+func mqttReadPacket() []byte { return []byte{0x33, 0xbb, 0xbb, 0x33} }
+
+func validateMQTTText(name, value string) error {
+	if len(value) > 100 {
+		return fmt.Errorf("MQTT %s最多允许 100 字节", name)
+	}
+	for _, b := range []byte(value) {
+		if b == 0 || b > 127 {
+			return fmt.Errorf("MQTT %s只支持不含 NUL 的 ASCII 字符", name)
+		}
+	}
+	return nil
 }
+
 func encodeMQTT(m MAC, c MQTTConfig) ([]byte, error) {
-	p := make([]byte, 623)
+	if c.HeartbeatInterval < 0 || c.HeartbeatInterval > 255 {
+		return nil, fmt.Errorf("MQTT 心跳间隔须为 0 到 255 秒")
+	}
+	p := make([]byte, mqttFrameSize)
 	p[0], p[1] = 0x44, 0xaa
 	copy(p[2:14], fmt.Sprintf("%X", m[:]))
 	offset := 14
+	names := []string{"用户名", "密码", "订阅主题", "发布主题", "设备 ID"}
 	for i, v := range c.values() {
-		if len(v) > mqttSlots[i]-1 {
-			return nil, fmt.Errorf("MQTT 第 %d 个字段最多允许 %d 字节", i+1, mqttSlots[i]-1)
-		}
-		for _, b := range []byte(v) {
-			if b == 0 || b > 127 {
-				return nil, fmt.Errorf("MQTT 参数只支持不含 NUL 的 ASCII 字符")
-			}
+		if err := validateMQTTText(names[i], v); err != nil {
+			return nil, err
 		}
 		p[offset] = byte(len(v))
-		copy(p[offset+1:], v)
-		offset += mqttSlots[i]
+		copy(p[offset+1:offset+101], v)
+		offset += 101
 	}
-	p[520], p[621], p[622] = 255, 0xaa, 0x44
+	// 文档的心跳长度只计主题；主题和内容共用 100 字节，不添加分隔符。
+	heartbeat := c.HeartbeatTopic + c.HeartbeatContent
+	if err := validateMQTTText("心跳主题与内容合计", heartbeat); err != nil {
+		return nil, err
+	}
+	p[519], p[520] = byte(len(c.HeartbeatTopic)), byte(c.HeartbeatInterval)
+	copy(p[521:621], heartbeat)
+	p[621], p[622] = 0xaa, 0x44
 	return p, nil
 }
+
 func parseMQTT(p []byte, m MAC) (MQTTConfig, error) {
 	fail := func(s string) (MQTTConfig, error) { return MQTTConfig{}, fmt.Errorf("MQTT 响应%s", s) }
-	if len(p) != 623 || !bytes.Equal(p[:2], []byte{0x33, 0xbb}) {
-		return fail("长度或帧头不正确")
+	if len(p) != mqttFrameSize || !bytes.Equal(p[:2], []byte{0x44, 0xaa}) || !bytes.Equal(p[621:], []byte{0xaa, 0x44}) {
+		return fail("长度或帧格式不正确")
 	}
 	if string(p[2:14]) != fmt.Sprintf("%X", m[:]) {
-		return fail("中的 MAC 与请求设备不匹配")
-	}
-	if p[520] != 255 || p[621] != 0xbb || p[622] != 0x33 {
-		return fail("保留区或帧尾不正确")
+		return fail("中的设备标识与请求设备不匹配")
 	}
 	offset := 14
 	v := make([]string, 5)
-	for i, slot := range mqttSlots {
+	for i := range v {
 		n := int(p[offset])
-		if n >= slot {
+		if n > 100 {
 			return fail("字段长度超出协议范围")
 		}
-		for _, b := range p[offset+1 : offset+1+n] {
-			if b == 0 || b > 127 {
-				return fail("字段包含不支持的字符")
-			}
+		value := string(p[offset+1 : offset+1+n])
+		if err := validateMQTTText("字段", value); err != nil {
+			return fail("字段包含不支持的字符")
 		}
-		for _, b := range p[offset+1+n : offset+slot] {
+		for _, b := range p[offset+1+n : offset+101] {
 			if b != 0 {
 				return fail("字段零填充格式不正确")
 			}
 		}
-		v[i] = string(p[offset+1 : offset+1+n])
-		offset += slot
+		v[i] = value
+		offset += 101
 	}
-	for _, b := range p[521:621] {
-		if b != 0 {
-			return fail("保留区格式不正确")
-		}
+	heartbeat := bytes.TrimRight(p[521:621], "\x00")
+	n := int(p[519])
+	if n > len(heartbeat) {
+		return fail("心跳主题长度超出内容范围")
 	}
-	return MQTTConfig{v[0], v[1], v[2], v[3], v[4]}, nil
+	if err := validateMQTTText("心跳主题与内容", string(heartbeat)); err != nil {
+		return fail("心跳字段包含不支持的字符")
+	}
+	return MQTTConfig{
+		Username: v[0], Password: v[1], SubscribeTopic: v[2], PublishTopic: v[3], DeviceID: v[4],
+		HeartbeatTopic: string(heartbeat[:n]), HeartbeatContent: string(heartbeat[n:]),
+		HeartbeatInterval: int(p[520]),
+	}, nil
 }
 func hexText(b []byte) string {
 	p := make([]string, len(b))
@@ -234,14 +257,17 @@ func hexText(b []byte) string {
 	return strings.Join(p, " ")
 }
 
-// MQTT 整体替换要求五个字段显式存在；空字符串是合法值。
+// MQTT 整体替换要求全部字段显式存在；空字符串和零间隔是合法值。
 func (c *MQTTConfig) UnmarshalJSON(data []byte) error {
 	type fields struct {
-		Username       *string `json:"username"`
-		Password       *string `json:"password"`
-		SubscribeTopic *string `json:"subscribe_topic"`
-		PublishTopic   *string `json:"publish_topic"`
-		DeviceID       *string `json:"device_id"`
+		Username          *string `json:"username"`
+		Password          *string `json:"password"`
+		SubscribeTopic    *string `json:"subscribe_topic"`
+		PublishTopic      *string `json:"publish_topic"`
+		DeviceID          *string `json:"device_id"`
+		HeartbeatTopic    *string `json:"heartbeat_topic"`
+		HeartbeatContent  *string `json:"heartbeat_content"`
+		HeartbeatInterval *int    `json:"heartbeat_interval"`
 	}
 	var f fields
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -249,9 +275,14 @@ func (c *MQTTConfig) UnmarshalJSON(data []byte) error {
 	if e := d.Decode(&f); e != nil {
 		return fmt.Errorf("MQTT 配置字段无效")
 	}
-	if d.Decode(new(any)) != io.EOF || f.Username == nil || f.Password == nil || f.SubscribeTopic == nil || f.PublishTopic == nil || f.DeviceID == nil {
+	if d.Decode(new(any)) != io.EOF || f.Username == nil || f.Password == nil || f.SubscribeTopic == nil || f.PublishTopic == nil || f.DeviceID == nil || f.HeartbeatTopic == nil || f.HeartbeatContent == nil || f.HeartbeatInterval == nil {
 		return fmt.Errorf("缺少完整 MQTT 配置")
 	}
-	*c = MQTTConfig{*f.Username, *f.Password, *f.SubscribeTopic, *f.PublishTopic, *f.DeviceID}
+	*c = MQTTConfig{
+		Username: *f.Username, Password: *f.Password, SubscribeTopic: *f.SubscribeTopic,
+		PublishTopic: *f.PublishTopic, DeviceID: *f.DeviceID,
+		HeartbeatTopic: *f.HeartbeatTopic, HeartbeatContent: *f.HeartbeatContent,
+		HeartbeatInterval: *f.HeartbeatInterval,
+	}
 	return nil
 }

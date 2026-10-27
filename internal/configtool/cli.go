@@ -107,7 +107,7 @@ func newCommand(client deviceClient) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "MQTT 配置（设备 %s）\n  用户名：%s\n  密码：%s\n  订阅主题：%s\n  发布主题：%s\n  设备 ID：%s\n", address, terminalText(c.Username), terminalText(c.Password), terminalText(c.SubscribeTopic), terminalText(c.PublishTopic), terminalText(c.DeviceID))
+		fmt.Fprintf(cmd.OutOrStdout(), "MQTT 配置（设备 %s）\n  用户名：%s\n  密码：%s\n  订阅主题：%s\n  发布主题：%s\n  设备 ID：%s\n  心跳主题：%s\n  心跳内容：%s\n  心跳间隔：%d 秒\n", address, terminalText(c.Username), terminalText(c.Password), terminalText(c.SubscribeTopic), terminalText(c.PublishTopic), terminalText(c.DeviceID), terminalText(c.HeartbeatTopic), terminalText(c.HeartbeatContent), c.HeartbeatInterval)
 		return nil
 	}})
 	var config MQTTConfig
@@ -128,10 +128,12 @@ func newCommand(client deviceClient) *cobra.Command {
 	for _, f := range []struct {
 		name, help string
 		target     *string
-	}{{"username", "用户名", &config.Username}, {"password", "密码", &config.Password}, {"subscribe-topic", "订阅主题", &config.SubscribeTopic}, {"publish-topic", "发布主题", &config.PublishTopic}, {"device-id", "设备 ID", &config.DeviceID}} {
+	}{{"username", "用户名", &config.Username}, {"password", "密码", &config.Password}, {"subscribe-topic", "订阅主题", &config.SubscribeTopic}, {"publish-topic", "发布主题", &config.PublishTopic}, {"device-id", "设备 ID", &config.DeviceID}, {"heartbeat-topic", "心跳主题（与内容合计最多 100 字节）", &config.HeartbeatTopic}, {"heartbeat-content", "心跳内容（与主题合计最多 100 字节）", &config.HeartbeatContent}} {
 		mqttSet.Flags().StringVar(f.target, f.name, "", f.help)
 		_ = mqttSet.MarkFlagRequired(f.name)
 	}
+	mqttSet.Flags().IntVar(&config.HeartbeatInterval, "heartbeat-interval", 0, "心跳间隔，0–255 秒")
+	_ = mqttSet.MarkFlagRequired("heartbeat-interval")
 	root.AddCommand(mqttSet)
 	var listen string
 	serve := &cobra.Command{Use: "serve", Short: "启动内嵌网页和 HTTP 配置服务", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

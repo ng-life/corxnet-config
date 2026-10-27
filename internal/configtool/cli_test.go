@@ -38,7 +38,7 @@ func TestCLIContract(t *testing.T) {
 		ok    bool
 		calls int
 	}{
-		{[]string{"--interface", "query", "scan"}, true, 1}, {[]string{"scan", "-i", "serve"}, true, 1}, {[]string{"read", "0090E2D72060", "--interface=en0", "--raw"}, true, 1}, {[]string{"set", "0090E2D72060", "id", "sensor", "west"}, true, 1}, {[]string{}, false, 0}, {[]string{"scan", "extra"}, false, 0}, {[]string{"scan", "--unknown"}, false, 0}, {[]string{"set", "0090E2D72060", "port", "0"}, false, 0}, {[]string{"set", "0090E2D72060", "mode", "1", "2"}, false, 0}, {[]string{"read", "90E2D72060"}, false, 0}, {[]string{"mqtt-set", "0090E2D72060", "--username", "user"}, false, 0}, {[]string{"mqtt-set", "0090E2D72060", "--username=", "--password=", "--subscribe-topic=", "--publish-topic=", "--device-id="}, true, 1}, {[]string{"serve", "--listen", "localhost:0"}, false, 0}, {[]string{"read", "--", "--raw"}, false, 0},
+		{[]string{"--interface", "query", "scan"}, true, 1}, {[]string{"scan", "-i", "serve"}, true, 1}, {[]string{"read", "0090E2D72060", "--interface=en0", "--raw"}, true, 1}, {[]string{"set", "0090E2D72060", "id", "sensor", "west"}, true, 1}, {[]string{}, false, 0}, {[]string{"scan", "extra"}, false, 0}, {[]string{"scan", "--unknown"}, false, 0}, {[]string{"set", "0090E2D72060", "port", "0"}, false, 0}, {[]string{"set", "0090E2D72060", "mode", "1", "2"}, false, 0}, {[]string{"read", "90E2D72060"}, false, 0}, {[]string{"mqtt-set", "0090E2D72060", "--username", "user"}, false, 0}, {[]string{"mqtt-set", "0090E2D72060", "--username=", "--password=", "--subscribe-topic=", "--publish-topic=", "--device-id=", "--heartbeat-topic=", "--heartbeat-content=", "--heartbeat-interval=0"}, true, 1}, {[]string{"serve", "--listen", "localhost:0"}, false, 0}, {[]string{"read", "--", "--raw"}, false, 0},
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprint(c.args), func(t *testing.T) {
@@ -69,5 +69,39 @@ func TestLocalCommandsAndExitCodes(t *testing.T) {
 	var out, err bytes.Buffer
 	if code := Run(context.Background(), []string{"scan", "--bad"}, strings.NewReader(""), &out, &err); code != 2 || out.Len() != 0 || err.Len() == 0 {
 		t.Fatal("exit/output contract")
+	}
+}
+
+func TestCLIMQTTHeartbeat(t *testing.T) {
+	for _, interval := range []string{"0", "255", "-1", "256", "1.5"} {
+		f := &fakeClient{}
+		root := newCommand(f)
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs([]string{"mqtt-set", "0090E2D72060", "--username=", "--password=", "--subscribe-topic=", "--publish-topic=", "--device-id=", "--heartbeat-topic=ping", "--heartbeat-content=alive", "--heartbeat-interval=" + interval})
+		err := root.Execute()
+		valid := interval == "0" || interval == "255"
+		if (err == nil) != valid {
+			t.Fatalf("interval %s: %v", interval, err)
+		}
+		if valid && (f.calls != 1 || f.mqtt.HeartbeatTopic != "ping" || f.mqtt.HeartbeatContent != "alive") {
+			t.Fatal("heartbeat fields lost")
+		}
+		if !valid && f.calls != 0 {
+			t.Fatal("invalid interval reached device")
+		}
+	}
+	f := &fakeClient{mqtt: sampleMQTT()}
+	root := newCommand(f)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"mqtt-read", "0090E2D72060"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{"心跳主题：ping", "心跳内容：alive", "心跳间隔：30 秒"} {
+		if !strings.Contains(out.String(), part) {
+			t.Fatal("missing heartbeat output")
+		}
 	}
 }

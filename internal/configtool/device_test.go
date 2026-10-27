@@ -81,18 +81,21 @@ func TestUDPSaveOrder(t *testing.T) {
 	}
 }
 func TestMQTTWriteReadbackAndRecovery(t *testing.T) {
-	for _, mode := range []string{"success", "mismatch", "invalid-pre-read", "restore-failure", "timeout-after-write"} {
+	for _, mode := range []string{"success", "mismatch", "invalid-pre-read", "restore-failure", "timeout-after-write", "ack-lost"} {
 		t.Run(mode, func(t *testing.T) {
 			original := sampleMQTT()
 			wanted := original
 			wanted.DeviceID = "new-device"
+			wanted.HeartbeatTopic = "new/ping"
+			wanted.HeartbeatContent = "new-body"
+			wanted.HeartbeatInterval = 60
 			current := original
 			writes := 0
 			var mu sync.Mutex
 			c := simulatedClient(t, func(p []byte) [][]byte {
 				mu.Lock()
 				defer mu.Unlock()
-				if len(p) == 16 {
+				if bytes.Equal(p, []byte{0x33, 0xbb, 0xbb, 0x33}) {
 					if mode == "invalid-pre-read" || (mode == "timeout-after-write" && writes == 1) {
 						return [][]byte{{0}}
 					}
@@ -100,18 +103,28 @@ func TestMQTTWriteReadbackAndRecovery(t *testing.T) {
 				}
 				if len(p) == 623 {
 					writes++
-					if mode == "success" {
+					expected := wanted
+					if writes > 1 {
+						expected = original
+					}
+					if !bytes.Equal(p, mqttResponse(expected)) {
+						t.Error("write/recovery frame does not preserve all document fields")
+					}
+					if mode == "success" || mode == "ack-lost" {
 						current = wanted
 					}
 					if mode == "mismatch" || mode == "timeout-after-write" {
 						if writes == 1 {
-							current.DeviceID = "incorrect"
+							current.HeartbeatContent = "incorrect"
 						} else {
 							current = original
 						}
 					}
 					if mode == "restore-failure" {
-						current.DeviceID = "incorrect"
+						current.HeartbeatContent = "incorrect"
+					}
+					if mode != "ack-lost" {
+						return [][]byte{{0x44, 0xaa, 0xaa, 0x44}}
 					}
 				}
 				return nil
@@ -122,7 +135,7 @@ func TestMQTTWriteReadbackAndRecovery(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			switch mode {
-			case "success":
+			case "success", "ack-lost":
 				if e != nil || got != wanted || writes != 1 {
 					t.Fatalf("%v writes=%d", e, writes)
 				}
@@ -155,5 +168,47 @@ func TestCancelReceive(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal(fmt.Errorf("cancel did not stop UDP read"))
+	}
+}
+
+func TestMQTTReadFiltersOtherDevices(t *testing.T) {
+	wanted := sampleMQTT()
+	c := simulatedClient(t, func(p []byte) [][]byte {
+		if !bytes.Equal(p, []byte{0x33, 0xbb, 0xbb, 0x33}) {
+			t.Error("unexpected MQTT read request")
+		}
+		other := mqttResponse(wanted)
+		other[13] = '1'
+		return [][]byte{{0x44, 0xaa, 0xaa, 0x44}, other, mqttResponse(wanted)}
+	})
+	got, _, err := c.ReadMQTT(context.Background(), testMAC)
+	if err != nil || got != wanted {
+		t.Fatal("target filtering", err)
+	}
+}
+
+func TestMQTTSaveAcknowledgement(t *testing.T) {
+	for _, mode := range []string{"valid", "invalid", "foreign-address"} {
+		t.Run(mode, func(t *testing.T) {
+			c := simulatedClient(t, func([]byte) [][]byte {
+				if mode == "invalid" {
+					return [][]byte{{0x44, 0xaa, 0xaa, 0x45}}
+				}
+				return [][]byte{{0}, {0x44, 0xaa, 0xaa, 0x44}}
+			})
+			s, err := c.open(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			address := s.destination.String()
+			if mode == "foreign-address" {
+				address = "127.0.0.1:1"
+			}
+			err = saveMQTT(s, mqttResponse(sampleMQTT()), address)
+			if (err == nil) != (mode == "valid") {
+				t.Fatalf("ack %s: %v", mode, err)
+			}
+		})
 	}
 }

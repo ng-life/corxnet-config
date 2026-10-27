@@ -416,7 +416,10 @@
         ["password", "密码", 100],
         ["subscribe_topic", "订阅主题", 100],
         ["publish_topic", "发布主题", 100],
-        ["device_id", "设备 ID", 101],
+        ["device_id", "设备 ID", 100],
+        ["heartbeat_topic", "心跳主题", 100],
+        ["heartbeat_content", "心跳内容（与主题合计最多 100 字节）", 100],
+        ["heartbeat_interval", "心跳间隔（秒）", 255],
       ];
       let selected = "",
         busy = false;
@@ -561,8 +564,17 @@
         l.textContent = label;
         const input = document.createElement("input");
         input.id = "mqtt-" + key;
-        input.maxLength = max;
-        input.placeholder = "ASCII，最多 " + max + " 字节";
+        if (key === "heartbeat_interval") {
+          input.type = "number";
+          input.min = "0";
+          input.max = "255";
+          input.step = "1";
+          input.required = true;
+          input.placeholder = "0–255 秒";
+        } else {
+          input.maxLength = max;
+          input.placeholder = "ASCII，最多 " + max + " 字节";
+        }
         input.autocomplete = "off";
         field.append(l, input);
         $("mqtt-fields").append(field);
@@ -613,13 +625,18 @@
         e.preventDefault();
         await run(async () => {
           const config = Object.fromEntries(
-            mqttDefinitions.map(([k]) => [k, $("mqtt-" + k).value]),
+            mqttDefinitions.map(([k]) => [
+              k,
+              k === "heartbeat_interval"
+                ? Number($("mqtt-" + k).value)
+                : $("mqtt-" + k).value,
+            ]),
           );
           if (
             !(await confirmAction(
               "设备：" +
                 selected +
-                "\n将整体替换全部五个 MQTT 字段，并复读核验。",
+                "\n将整体替换全部八个 MQTT 字段（含心跳配置），并复读核验。",
             ))
           )
             return;

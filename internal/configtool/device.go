@@ -154,7 +154,7 @@ func (c udpClient) Apply(ctx context.Context, m MAC, p []byte) (string, error) {
 	return "配置响应超时；保存命令已发送，请重新读取核对。", nil
 }
 func receiveMQTT(s *udpSocket, m MAC) (MQTTConfig, string, error) {
-	if e := send(s, mqttReadPacket(m)); e != nil {
+	if e := send(s, mqttReadPacket()); e != nil {
 		return MQTTConfig{}, "", e
 	}
 	_ = s.SetReadDeadline(time.Now().Add(timeout))
@@ -183,6 +183,26 @@ func (c udpClient) ReadMQTT(ctx context.Context, m MAC) (MQTTConfig, string, err
 	defer s.Close()
 	return receiveMQTT(s, m)
 }
+
+// saveMQTT 等待文档规定的保存应答，再允许复读。应答不含设备标识，
+// 因此只接受写前读取所确认设备地址发来的应答。
+func saveMQTT(s *udpSocket, p []byte, address string) error {
+	if err := send(s, p); err != nil {
+		return err
+	}
+	_ = s.SetReadDeadline(time.Now().Add(timeout))
+	b := make([]byte, 2048)
+	for {
+		n, from, err := s.ReadFromUDP(b)
+		if err != nil {
+			return fmt.Errorf("等待 MQTT 保存应答失败：%w", err)
+		}
+		if from.String() == address && n == 4 && b[0] == 0x44 && b[1] == 0xaa && b[2] == 0xaa && b[3] == 0x44 {
+			return nil
+		}
+	}
+}
+
 func (c udpClient) WriteMQTT(ctx context.Context, m MAC, wanted MQTTConfig) (MQTTConfig, error) {
 	p, e := encodeMQTT(m, wanted)
 	if e != nil {
@@ -193,27 +213,30 @@ func (c udpClient) WriteMQTT(ctx context.Context, m MAC, wanted MQTTConfig) (MQT
 		return MQTTConfig{}, e
 	}
 	defer s.Close()
-	// 写前必须成功读取，原值只保留在内存。写后核验失败则尝试恢复并复读。
-	original, _, e := receiveMQTT(s, m)
+	// 写前必须完整读取，恢复值包含心跳配置，仅保留在内存。
+	original, address, e := receiveMQTT(s, m)
 	if e != nil {
 		return MQTTConfig{}, e
 	}
 	if ctx.Err() != nil {
 		return MQTTConfig{}, ctx.Err()
 	}
-	if e = send(s, p); e != nil {
-		return MQTTConfig{}, e
-	}
+	saveErr := saveMQTT(s, p, address)
+	// 即使应答丢失，也复读判断是否已生效，避免仅因丢包覆盖成功写入。
 	actual, _, readErr := receiveMQTT(s, m)
 	if readErr == nil && actual == wanted {
 		return actual, nil
 	}
-	recovery, _ := encodeMQTT(m, original)
-	if e = send(s, recovery); e == nil {
+	recovery, e := encodeMQTT(m, original)
+	if e == nil {
+		_ = saveMQTT(s, recovery, address)
 		restored, _, err := receiveMQTT(s, m)
 		if err == nil && restored == original {
 			return MQTTConfig{}, fmt.Errorf("保存后复读核验失败；已恢复写入前原值并复读确认")
 		}
+	}
+	if saveErr != nil {
+		return MQTTConfig{}, fmt.Errorf("%w；复读核验失败，恢复也未确认；请重新读取检查设备配置", saveErr)
 	}
 	return MQTTConfig{}, fmt.Errorf("保存后复读核验失败，恢复也未确认；请重新读取检查设备配置")
 }
